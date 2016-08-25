@@ -2,7 +2,7 @@
 // var Redshift    = require('node-redshift');
 const bricks = require("sql-bricks");
 var insert = bricks.insert;
-const Pg = require('pg');
+const pg = require('pg');
 const Auth0     = require('auth0');
 const async     = require('async');
 const moment    = require('moment');
