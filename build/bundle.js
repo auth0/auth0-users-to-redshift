@@ -47,20 +47,21 @@ module.exports =
 
 	'use strict';
 
-	var Loggly = __webpack_require__(1);
-	var Auth0 = __webpack_require__(13);
-	var async = __webpack_require__(14);
-	var moment = __webpack_require__(15);
-	var useragent = __webpack_require__(16);
-	var express = __webpack_require__(17);
-	var Webtask = __webpack_require__(18);
+	// const Loggly    = require('loggly');
+	var Redshift = __webpack_require__(1);
+	var Auth0 = __webpack_require__(20);
+	var async = __webpack_require__(21);
+	var moment = __webpack_require__(22);
+	var useragent = __webpack_require__(23);
+	var express = __webpack_require__(24);
+	var Webtask = __webpack_require__(25);
 	var app = express();
-	var Request = __webpack_require__(20);
-	var memoizer = __webpack_require__(21);
+	var Request = __webpack_require__(28);
+	var memoizer = __webpack_require__(29);
 
 	function lastLogCheckpoint(req, res) {
 	  var ctx = req.webtaskContext;
-	  var required_settings = ['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'LOGGLY_CUSTOMER_TOKEN'];
+	  var required_settings = ['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET'];
 	  var missing_settings = required_settings.filter(function (setting) {
 	    return !ctx.data[setting];
 	  });
@@ -80,11 +81,16 @@ module.exports =
 	      token: req.access_token
 	    });
 
-	    var loggly = Loggly.createClient({
-	      token: ctx.data.LOGGLY_CUSTOMER_TOKEN,
-	      subdomain: ctx.data.LOGGLY_SUBDOMAIN || '-',
-	      tags: ['auth0']
-	    });
+	    var credentials = {
+	      user: ctx.data.AWS_REDSHIFT_USER,
+	      database: ctx.data.AWS_REDSHIFT_DATABASE,
+	      password: ctx.data.AWS_REDSHIFT_PASSWORD,
+	      port: ctx.data.AWS_REDSHIFT_PORT,
+	      host: ctx.data.AWS_REDSHIFT_HOST
+	    };
+
+	    var redshiftClient = new Redshift(client);
+	    var model = Redshift.import('./model');
 
 	    // Start the process.
 	    async.waterfall([function (callback) {
@@ -139,15 +145,22 @@ module.exports =
 	    }, function (context, callback) {
 	      console.log('Sending ' + context.logs.length);
 
-	      // loggly
-	      loggly.log(context.logs, function (err) {
+	      async.eachLimit(context.logs, 5, function (log, cb) {
+	        model.create({
+	          date: log.date,
+	          type: log.type,
+	          connection: log.connection,
+	          client_id: log.client_id,
+	          client_name: log.client_name,
+	          user_id: log.user_id,
+	          user_name: log.user_name
+	        }, cb);
+	      }, function (err) {
 	        if (err) {
-	          console.log('Error sending logs to Sumologic', err);
 	          return callback(err);
 	        }
 
 	        console.log('Upload complete.');
-
 	        return callback(null, context);
 	      });
 	    }], function (err, context) {
@@ -404,1643 +417,1897 @@ module.exports =
 /* 1 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/*
-	 * loggly.js: Wrapper for node-loggly object
-	 *
-	 * (C) 2010 Charlie Robbins
-	 * MIT LICENSE
-	 *
-	 */
-
-	var loggly = exports;
-
-	//
-	// Export node-loggly core client APIs
-	//
-	loggly.version       = __webpack_require__(2).version;
-	loggly.createClient  = __webpack_require__(3).createClient;
-	loggly.serialize     = __webpack_require__(7).serialize;
-	loggly.Loggly        = __webpack_require__(3).Loggly;
-
-	//
-	// Export Resources for node-loggly
-	//
-	loggly.Search = __webpack_require__(10).Search;
-
+	module.exports = __webpack_require__(2);
+	module.exports.setConfig = __webpack_require__(2).setConfig;
+	module.exports.query = __webpack_require__(4);
+	module.exports.model = __webpack_require__(5);
+	module.exports.import = __webpack_require__(5).import;
 
 /***/ },
 /* 2 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = {
-		"name": "loggly",
-		"description": "A client implementation for Loggly cloud Logging-as-a-Service API",
-		"version": "1.1.0",
-		"author": {
-			"name": "Charlie Robbins",
-			"email": "charlie.robbins@gmail.com"
-		},
-		"repository": {
-			"type": "git",
-			"url": "git+ssh://git@github.com/winstonjs/node-loggly.git"
-		},
-		"keywords": [
-			"cloud computing",
-			"api",
-			"logging",
-			"loggly"
-		],
-		"dependencies": {
-			"request": "2.67.x",
-			"timespan": "2.3.x",
-			"json-stringify-safe": "5.0.x"
-		},
-		"devDependencies": {
-			"common-style": "^3.1.0",
-			"vows": "0.8.x"
-		},
-		"main": "./lib/loggly",
-		"scripts": {
-			"pretest": "common lib/**/*.js lib/*.js test/helpers.js",
-			"test": "vows test/*-test.js --spec"
-		},
-		"license": "MIT",
-		"engines": {
-			"node": ">= 0.8.0"
-		},
-		"gitHead": "5e5ab617ae5ee69dd25ae69c6bdedb1b4098fa46",
-		"bugs": {
-			"url": "https://github.com/winstonjs/node-loggly/issues"
-		},
-		"homepage": "https://github.com/winstonjs/node-loggly#readme",
-		"_id": "loggly@1.1.0",
-		"_shasum": "663e3edb8c880b14ee8950cb35c52e0939c537ae",
-		"_from": "loggly@>=1.1.0 <2.0.0",
-		"_npmVersion": "2.14.15",
-		"_nodeVersion": "4.2.2",
-		"_npmUser": {
-			"name": "indexzero",
-			"email": "charlie.robbins@gmail.com"
-		},
-		"maintainers": [
-			{
-				"name": "indexzero",
-				"email": "charlie.robbins@gmail.com"
-			},
-			{
-				"name": "jcrugzz",
-				"email": "jcrugzz@gmail.com"
-			}
-		],
-		"dist": {
-			"shasum": "663e3edb8c880b14ee8950cb35c52e0939c537ae",
-			"tarball": "http://registry.npmjs.org/loggly/-/loggly-1.1.0.tgz"
-		},
-		"directories": {},
-		"_resolved": "https://registry.npmjs.org/loggly/-/loggly-1.1.0.tgz",
-		"readme": "ERROR: No README data found!"
+	var pg = __webpack_require__(3);
+
+	var Redshift = function(config){
+	  if(config && typeof config === 'string' || typeof config === 'object'){
+	    var that = this;
+	    that.config = config;
+
+	    // use connection pooling from pg module
+	    pg.connect(config, function(err, client, done) {
+	      if(err) {
+	        throw new Error('error fetching client from pool', err);
+	      }
+	      else {
+	        // store the client instance to make queries with
+	        that.client = client;
+
+	        // store done to call back so it can return connection back to pool
+	        // https://github.com/brianc/node-postgres#client-pooling
+	        that.done = done;
+	      }
+	    });
+	  }
+	  else{
+	    throw new Error('invalid Redshift connection configuration');
+	  }
 	};
+
+	module.exports = Redshift;
 
 /***/ },
 /* 3 */
-/***/ function(module, exports, __webpack_require__) {
+/***/ function(module, exports) {
 
-	/*
-	 * client.js: Core client functions for accessing Loggly
-	 *
-	 * (C) 2010 Charlie Robbins
-	 * MIT LICENSE
-	 *
-	 */
-
-	var events = __webpack_require__(4),
-	    util = __webpack_require__(5),
-	    qs = __webpack_require__(6),
-	    common = __webpack_require__(7),
-	    loggly = __webpack_require__(1),
-	    Search = __webpack_require__(10).Search,
-	    stringifySafe = __webpack_require__(12);
-
-	function stringify(msg) {
-	  var payload;
-
-	  try { payload = JSON.stringify(msg) }
-	  catch (ex) { payload = stringifySafe(msg, null, null, noop) }
-
-	  return payload;
-	}
-	//
-	// function createClient (options)
-	//   Creates a new instance of a Loggly client.
-	//
-	exports.createClient = function (options) {
-	  return new Loggly(options);
-	};
-
-	//
-	// ### function Loggly (options)
-	// #### @options {Object} Options for this Loggly client
-	// ####   @subdomain
-	// ####   @token
-	// ####   @json
-	// ####   @auth
-	// ####   @tags
-	// Constructor for the Loggly object
-	//
-	var Loggly = exports.Loggly = function (options) {
-	  if (!options || !options.subdomain || !options.token) {
-	    throw new Error('options.subdomain and options.token are required.');
-	  }
-
-	  events.EventEmitter.call(this);
-	  this.subdomain    = options.subdomain;
-	  this.token        = options.token;
-	  this.host         = options.host || 'logs-01.loggly.com';
-	  this.json         = options.json || null;
-	  this.auth         = options.auth || null;
-	  this.proxy        = options.proxy || null;
-	  this.userAgent    = 'node-loggly ' + loggly.version;
-	  this.useTagHeader = 'useTagHeader' in options ? options.useTagHeader : true;
-
-	  //
-	  // Set the tags on this instance.
-	  //
-	  this.tags = options.tags
-	    ? this.tagFilter(options.tags)
-	    : null;
-
-	  var url   = 'https://' + this.host,
-	      api   = options.api  || 'apiv2';
-
-	  this.urls = {
-	    default: url,
-	    log:     [url, 'inputs', this.token].join('/'),
-	    bulk:    [url, 'bulk', this.token].join('/'),
-	    api:     'https://' + [this.subdomain, 'loggly', 'com'].join('.') + '/' + api
-	  };
-	};
-
-	//
-	// Inherit from events.EventEmitter
-	//
-	util.inherits(Loggly, events.EventEmitter);
-
-	//
-	// ### function log (msg, tags, callback)
-	// #### @msg {string|Object} Data to log
-	// #### @tags {Array} **Optional** Tags to send with this msg
-	// #### @callback {function} Continuation to respond to when complete.
-	// Logs the message to the token associated with this instance. If
-	// the message is an Object we will attempt to serialize it. If any
-	// `tags` are supplied they will be passed via the `X-LOGGLY-TAG` header.
-	//  - http://www.loggly.com/docs/api-sending-data/
-	//
-	Loggly.prototype.log = function (msg, tags, callback) {
-	  if (!callback && typeof tags === 'function') {
-	    callback = tags;
-	    tags = null;
-	  }
-
-	  var self = this,
-	      logOptions;
-
-	  //
-	  // Remark: Have some extra logic for detecting if we want to make a bulk
-	  // request to loggly
-	  //
-	  var isBulk = Array.isArray(msg);
-	  function serialize(msg) {
-	    if (msg instanceof Object) {
-	      return self.json ? stringify(msg) : common.serialize(msg);
-	    }
-	    else {
-	      return self.json ? stringify({ message: msg }) : msg;
-	    }
-	  }
-
-	  msg = isBulk ? msg.map(serialize).join('\n') : serialize(msg);
-
-	  logOptions = {
-	    uri:     isBulk ? this.urls.bulk : this.urls.log,
-	    method:  'POST',
-	    body:    msg,
-	    proxy:   this.proxy,
-	    headers: {
-	      host:             this.host,
-	      accept:           '*/*',
-	      'user-agent':     this.userAgent,
-	      'content-type':   this.json ? 'application/json' : 'text/plain',
-	      'content-length': Buffer.byteLength(msg)
-	    }
-	  };
-
-	  //
-	  // Remark: if tags are passed in run the filter on them and concat
-	  // with any tags that were passed or just use default tags if they exist
-	  //
-	  tags = tags
-	    ? (this.tags ? this.tags.concat(this.tagFilter(tags)) : this.tagFilter(tags))
-	    : this.tags;
-
-	  //
-	  // Optionally send `X-LOGGLY-TAG` if we have them
-	  //
-	  if (tags) {
-	    // Decide whether to add tags as http headers or add them to the URI.
-	    if (this.useTagHeader) {
-	      logOptions.headers['X-LOGGLY-TAG'] = tags.join(',');
-	    }
-	    else {
-	      logOptions.uri += '/tag/' + tags.join(',') + '/';
-	    }
-	  }
-
-	  common.loggly(logOptions, callback, function (res, body) {
-	    try {
-	      var result = JSON.parse(body);
-	      self.emit('log', result);
-	      if (callback) {
-	        callback(null, result);
-	      }
-	    }
-	    catch (ex) {
-	      if (callback) {
-	        callback(new Error('Unspecified error from Loggly: ' + ex));
-	      }
-	    }
-	  });
-
-	  return this;
-	};
-
-	//
-	// ### function tag (tags)
-	// #### @tags {Array} Tags to use for `X-LOGGLY-TAG`
-	// Sets the tags on this instance
-	//
-	Loggly.prototype.tagFilter = function (tags) {
-	  var isSolid = /^[\w\d][\w\d-_.]+/;
-
-	  tags = !Array.isArray(tags)
-	    ? [tags]
-	    : tags;
-
-	  //
-	  // TODO: Filter against valid tag names with some Regex
-	  // http://www.loggly.com/docs/tags/
-	  // Remark: Docs make me think we dont need this but whatevs
-	  //
-	  return tags.filter(function (tag) {
-	    //
-	    // Remark: length may need to use Buffer.byteLength?
-	    //
-	    return isSolid.test(tag) && tag.length <= 64;
-	  });
-	};
-
-	//
-	// ### function customer (callback)
-	// ### @callback {function} Continuation to respond to.
-	// Retrieves the customer information from the Loggly API:
-	//   - http://www.loggly.com/docs/api-account-info/
-	//
-	Loggly.prototype.customer = function (callback) {
-	  common.loggly({
-	    uri: this.logglyUrl('customer'),
-	    auth: this.auth
-	  }, callback, function (res, body) {
-	    var customer;
-	    try { customer = JSON.parse(body) }
-	    catch (ex) { return callback(ex) }
-	    callback(null, customer);
-	  });
-	};
-
-	//
-	// function search (query, callback)
-	//   Returns a new search object which can be chained
-	//   with options or called directly if @callback is passed
-	//   initially.
-	//
-	// Sample Usage:
-	//
-	//   client.search('404', function () { /* ... */ })
-	//         .on('rsid', function (rsid) { /* ... */ })
-	//
-	//   client.search({ query: '404', rows: 100 })
-	//         .on('rsid', function (rsid) { /* ... */ })
-	//         .run(function () { /* ... */ });
-	//
-	Loggly.prototype.search = function (query, callback) {
-	  var options = typeof query === 'string'
-	    ? { query: query }
-	    : query;
-
-	  options.callback = callback;
-	  return new Search(options, this);
-	};
-
-	//
-	// function logglyUrl ([path, to, resource])
-	//   Helper method that concats the string params into a url
-	//   to request against a loggly serverUrl.
-	//
-	Loggly.prototype.logglyUrl = function (/* path, to, resource */) {
-	  var args = Array.prototype.slice.call(arguments);
-	  return [this.urls.api].concat(args).join('/');
-	};
-
-	//
-	// Simple noop function for reusability
-	//
-	function noop() {}
-
+	module.exports = require("pg");
 
 /***/ },
 /* 4 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("events");
+	var Redshift = __webpack_require__(2);
+
+	Redshift.prototype.query = function(query, options, callback){
+	  var that = this; //store original context of this because it will change inside callbacks
+	  var args = []; //this will store function args
+
+	  Array.prototype.push.apply(args, arguments);
+	  var q = args.shift(); //get query string which is first arg
+	  var cb = args.pop(); //get callback function which is last arg
+	  var opts = null;
+	  if(args && args[0]) opts = args[0]; // if there's an options arg, set it
+
+	  // check if client exists. if it does, run query
+	  // but if an application tries to call query before the connection
+	  // is established, set an interval and poll at 50ms to see if the client exists
+	  // once it does, clear the interval and run query
+	  if(that && !that.client){
+	    var count = 0;
+	    var intId = setInterval(function(){
+	      if(that && that.client){
+	        clearInterval(intId);
+	        runQuery(that, q, opts, cb);
+	      }
+	      else{
+	        count = count + 1; // count the attempts
+	        if(count > 600){ // and after 1 min, give up
+	          clearInterval(intId);
+	          throw new Error("Taking too long to estable connection or unable to make query");
+	        }
+	      }
+	    }, 100);
+	  }
+	  else runQuery(that, q, opts, cb);
+	};
+
+	function runQuery(that, q, opts, cb){
+	  that.client.query(q, function(err, data){
+	    if(err) cb(err);
+	    else{
+	      that.done();
+	      if(opts && opts.raw === true) cb(null, data.rows);
+	      else cb(null, data);
+	    }
+	  });
+	}
+
+	module.exports = Redshift.prototype.query;
 
 /***/ },
 /* 5 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("util");
+	var join = __webpack_require__(6).join;
+	var fs = __webpack_require__(7);
+	var folderName = 'redshift_models';
+	var ORM = __webpack_require__(8);
+	var Redshift = __webpack_require__(2);
+
+
+	var template = [
+	  "'use strict';"
+	  , "var model = require('node-redshift').model;"
+	  , "var person = {"
+	  , "  'tableName': 'people',"
+	  , "  'tableProperties': {"
+	  , "    'id': {"
+	  , "      'type': 'key'"
+	  , "    },"
+	  , "    'name': { "
+	  , "      'type': 'string',"
+	  , "      'required': true"
+	  , "    },"
+	  , "    'email': { "
+	  , "      'type': 'string',"
+	  , "      'required': true"
+	  , "    }"
+	  , "  }"
+	  , "};"
+	  , "module.exports = person;"
+	].join('\n');
+
+	function create(name) {
+	  try {
+	    fs.mkdirSync(folderName, 0774);
+	  } catch (err) {
+	    // ignore
+	  }
+	  var path = join(folderName, name + '.js');
+	  fs.writeFileSync(path, template);
+	}
+
+	module.exports.create = create;
+
+	Redshift.prototype.import = function(name){
+	  if(!Redshift.prototype.models) Redshift.prototype.models = [];
+	  var path = join(process.cwd(), name);
+	  if(Redshift.prototype.models[path]) return Redshift.prototype.models[path];
+	  else {
+	    var obj = __webpack_require__(12)(path);
+
+	    if (typeof obj != 'object') throw new Error('Cannot build without an object');
+	    if (obj.hasOwnProperty('tableName') == false && obj.tableName != null) throw new Error('Cannot build without a tableName to connect');
+	    if (obj.hasOwnProperty('tableProperties') == false && obj.tableProperties != null) throw new Error('Cannot build without tableProperties to export');
+
+	    var _return = new ORM(this);
+	    _return.tableName = obj.tableName;
+	    _return.tableProperties = obj.tableProperties;
+
+	    Redshift.prototype.models[path] = _return;
+	    return _return;
+	  }
+	};
+
+	module.exports.import = Redshift.prototype.import;
 
 /***/ },
 /* 6 */
 /***/ function(module, exports) {
 
-	module.exports = require("querystring");
+	module.exports = require("path");
 
 /***/ },
 /* 7 */
-/***/ function(module, exports, __webpack_require__) {
+/***/ function(module, exports) {
 
-	/*
-	 * common.js: Common utility functions for requesting against Loggly APIs
-	 *
-	 * (C) 2010 Charlie Robbins
-	 * MIT LICENSE
-	 *
-	 */
-
-	var https = __webpack_require__(8),
-	    util = __webpack_require__(5),
-	    request = __webpack_require__(9),
-	    loggly = __webpack_require__(1);
-
-	var common = exports;
-
-	//
-	// Failure HTTP Response codes based
-	// off Loggly specification.
-	//
-	var failCodes = common.failCodes = {
-	  400: 'Bad Request',
-	  401: 'Unauthorized',
-	  403: 'Forbidden',
-	  404: 'Not Found',
-	  409: 'Conflict / Duplicate',
-	  410: 'Gone',
-	  500: 'Internal Server Error',
-	  501: 'Not Implemented',
-	  503: 'Throttled'
-	};
-
-	//
-	// Success HTTP Response codes based
-	// off Loggly specification.
-	//
-	var successCodes = common.successCodes = {
-	  200: 'OK',
-	  201: 'Created',
-	  202: 'Accepted',
-	  203: 'Non-authoritative information',
-	  204: 'Deleted'
-	};
-
-	//
-	// Core method that actually sends requests to Loggly.
-	// This method is designed to be flexible w.r.t. arguments
-	// and continuation passing given the wide range of different
-	// requests required to fully implement the Loggly API.
-	//
-	// Continuations:
-	//   1. 'callback': The callback passed into every node-loggly method
-	//   2. 'success':  A callback that will only be called on successful requests.
-	//                  This is used throughout node-loggly to conditionally
-	//                  do post-request processing such as JSON parsing.
-	//
-	// Possible Arguments (1 & 2 are equivalent):
-	//   1. common.loggly('some-fully-qualified-url', auth, callback, success)
-	//   2. common.loggly('GET', 'some-fully-qualified-url', auth, callback, success)
-	//   3. common.loggly('DELETE', 'some-fully-qualified-url', auth, callback, success)
-	//   4. common.loggly({ method: 'POST', uri: 'some-url', body: { some: 'body'} }, callback, success)
-	//
-	common.loggly = function () {
-	  var args = Array.prototype.slice.call(arguments),
-	      success = args.pop(),
-	      callback = args.pop(),
-	      responded,
-	      requestBody,
-	      headers,
-	      method,
-	      auth,
-	      proxy,
-	      uri;
-
-	  //
-	  // Now that we've popped off the two callbacks
-	  // We can make decisions about other arguments
-	  //
-	  if (args.length === 1) {
-	    if (typeof args[0] === 'string') {
-	      //
-	      // If we got a string assume that it's the URI
-	      //
-	      method = 'GET';
-	      uri    = args[0];
-	    }
-	    else {
-	      method      = args[0].method || 'GET';
-	      uri         = args[0].uri;
-	      requestBody = args[0].body;
-	      auth        = args[0].auth;
-	      headers     = args[0].headers;
-	      proxy       = args[0].proxy;
-	    }
-	  }
-	  else if (args.length === 2) {
-	    method = 'GET';
-	    uri    = args[0];
-	    auth   = args[1];
-	  }
-	  else {
-	    method = args[0];
-	    uri    = args[1];
-	    auth   = args[2];
-	  }
-
-	  function onError(err) {
-	    if (!responded) {
-	      responded = true;
-	      if (callback) { callback(err) }
-	    }
-	  }
-
-	  var requestOptions = {
-	    uri: uri,
-	    method: method,
-	    headers: headers || {},
-	    proxy: proxy
-	  };
-
-	  if (auth) {
-	    requestOptions.headers.authorization = 'Basic ' + new Buffer(auth.username + ':' + auth.password).toString('base64');
-	  }
-
-	  if (requestBody) {
-	    requestOptions.body = requestBody;
-	  }
-
-	  try {
-	    request(requestOptions, function (err, res, body) {
-	      if (err) {
-	        return onError(err);
-	      }
-
-	      var statusCode = res.statusCode.toString();
-	      if (Object.keys(failCodes).indexOf(statusCode) !== -1) {
-	        return onError((new Error('Loggly Error (' + statusCode + '): ' + failCodes[statusCode])));
-	      }
-
-	      success(res, body);
-	    });
-	  }
-	  catch (ex) {
-	    onError(ex);
-	  }
-	};
-
-	//
-	// ### function serialize (obj, key)
-	// #### @obj {Object|literal} Object to serialize
-	// #### @key {string} **Optional** Optional key represented by obj in a larger object
-	// Performs simple comma-separated, `key=value` serialization for Loggly when
-	// logging for non-JSON values.
-	//
-	common.serialize = function (obj, key) {
-	  if (obj === null) {
-	    obj = 'null';
-	  }
-	  else if (obj === undefined) {
-	    obj = 'undefined';
-	  }
-	  else if (obj === false) {
-	    obj = 'false';
-	  }
-
-	  if (typeof obj !== 'object') {
-	    return key ? key + '=' + obj : obj;
-	  }
-
-	  var msg = '',
-	      keys = Object.keys(obj),
-	      length = keys.length;
-
-	  for (var i = 0; i < length; i++) {
-	    if (Array.isArray(obj[keys[i]])) {
-	      msg += keys[i] + '=[';
-
-	      for (var j = 0, l = obj[keys[i]].length; j < l; j++) {
-	        msg += common.serialize(obj[keys[i]][j]);
-	        if (j < l - 1) {
-	          msg += ', ';
-	        }
-	      }
-
-	      msg += ']';
-	    }
-	    else {
-	      msg += common.serialize(obj[keys[i]], keys[i]);
-	    }
-
-	    if (i < length - 1) {
-	      msg += ', ';
-	    }
-	  }
-
-	  return msg;
-	};
-
-	//
-	// function clone (obj)
-	//   Helper method for deep cloning pure JSON objects
-	//   i.e. JSON objects that are either literals or objects (no Arrays, etc)
-	//
-	common.clone = function (obj) {
-	  var clone = {};
-	  for (var i in obj) {
-	    clone[i] = obj[i] instanceof Object ? common.clone(obj[i]) : obj[i];
-	  }
-
-	  return clone;
-	};
-
+	module.exports = require("fs");
 
 /***/ },
 /* 8 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("https");
+	var fs = __webpack_require__(7);
+	var bricks = __webpack_require__(9);
+	var Validate = __webpack_require__(11);
+
+	// convenience method:
+	function dbCall(redshiftClient, queryStr, callback) {
+	  redshiftClient.query(queryStr, function(err, data){
+	    if(err) callback(err);
+	    else {
+	      callback(null, data);
+	    }
+	  });
+	}
+
+	// ---------------------------------------
+
+	var ORM = function(redshiftClient) {
+	  this.tableName = null;
+	  this.tableProperties = null;
+	  this.redshiftClient = redshiftClient;
+	};
+
+	/**
+	 * create a new instance of object
+	 * @param  {Object}   data Object with keys/values to create in database. keys are column names, values are data
+	 * @param  {Function} cb   
+	 * @return {Object}        Object that's inserted into redshift
+	 *
+	 * Usage
+	 * Person.create({emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
+	 *   if(err) throw err;
+	 *   else console.log(data);
+	 * });
+	 */
+	ORM.prototype.create = function(data, cb) {
+	  var args = []; //this will store function args
+
+	  Array.prototype.push.apply(args, arguments);
+	  var data = args.shift(); //get query string which is first arg
+	  var callback = args.pop(); //get callback function which is last arg
+	  // var opts = null;
+	  // if(args && args[0]) opts = args[0]; // if there's an options arg, set it
+
+	  data = Validate(this.tableProperties, data);
+	  var queryStr = bricks.insert(this.tableName, data).toString();
+
+	  dbCall(this.redshiftClient, queryStr, function(err, data){
+	    if(err) callback(err);
+	    else callback(null, data);
+	  });
+	};
+
+
+	/**
+	 * update an existing item in redshift
+	 * @param  {Object}   whereClause The properties that identify the rows to update. Essentially the WHERE clause in the UPDATE statement
+	 * @param  {Object}   data        Properties to overwrite in the record
+	 * @param  {Function} callback    
+	 * @return {Object}               Object that's updated in redshift
+	 *
+	 * Usage
+	 * Person.update({id: 72}, {emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
+	 *   if(err) throw err;
+	 *   else console.log(data);
+	 * })
+	 */
+	ORM.prototype.update = function(whereClause, data, callback) {
+	  data = Validate(this.tableProperties, data);
+	  var queryStr = bricks.update(this.tableName, data).where(whereClause).toString();
+
+	  dbCall(this.redshiftClient, queryStr, function(err, data){
+	    if(err) callback(err);
+	    else callback(null, data);
+	  });
+	};
+
+	// Person.delete({id: 72}, function(err, data){
+	// })
+
+	/**
+	 * delete rows from redshift
+	 * @param  {Object}   whereClause The properties that identify the rows to update. Essentially the WHERE clause in the UPDATE statement
+	 * @param  {Function} cb   
+	 * @return {Object}        Object that's deleted from redshift
+	 *
+	 * Usage
+	 * Person.delete({emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
+	 *   if(err) throw err;
+	 *   else console.log(data);
+	 * });
+	 */
+	ORM.prototype.delete = function(whereClause, callback) {
+	  var queryStr = bricks.delete(this.tableName).where(whereClause).toString();
+
+	  dbCall(this.redshiftClient, queryStr, function(err, data){
+	    if(err) callback(err);
+	    else callback(null, data);
+	  });
+	};
+	module.exports = ORM;
 
 /***/ },
 /* 9 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("request");
+	(function() {
+	  "use strict";
+
+	  var is_common_js = typeof exports != 'undefined';
+	  var default_opts = { placeholder: '?' };
+	  
+	  var _;
+	  if (is_common_js)
+	    _ = __webpack_require__(10);
+	  else
+	    _ = window._;
+
+	  // sql() wrapper allows SQL (column/table/etc) where a value (string/number/etc) is expected
+	  // it is also the main namespace for SQLBricks
+	  function sql(str) {
+	    if (!(this instanceof sql))
+	      return applyNew(sql, arguments);
+
+	    this.str = str;
+	    this.vals = _.toArray(arguments).slice(1);
+
+	    // support passing a single array
+	    if (_.isArray(this.vals[0]))
+	      this.vals = this.vals[0];
+	  }
+	  sql.prototype.toString = function toString(opts) {
+	    function replacer(match, capture) {
+	      // don't do any replacing if the user supplied no values
+	      if (!opts.values.length)
+	        return match;
+
+	      var ix = capture ? parseInt(capture, 10) : opts.value_ix++;
+	      var val = opts.values[ix - 1];
+	      if (_.isUndefined(val))
+	        throw new Error('Parameterized sql() (' + str + ') requires ' + ix + ' parameter(s) but only ' + opts.values.length + ' parameter(s) were supplied');
+	      if (_.isObject(sql) && !_.isArray(sql) && sql == null)
+	        return val.toString(opts);
+	      else
+	        return sql.convert(val);
+	    }
+
+	    var str = this.str;
+	    if (!opts)
+	      opts = default_opts;
+	    if (!opts.values)
+	      opts.values = [];
+	    if (!opts.value_ix)
+	      opts.value_ix = 1;
+
+	    this.vals.forEach(function(val) {
+	      opts.values.push(val);
+	    });
+
+	    // shift the placeholder indexes if there are already values
+	    if (opts.value_ix > 1) {
+	      var orig_val_ix = opts.value_ix;
+	      if (opts.placeholder == '$%d')
+	        str = str.replace(/\$(\d+)/g, function(match, capture) { opts.value_ix++; return '$' + (parseInt(capture, 10) + orig_val_ix - 1); });
+	      else if (opts.placeholder == '?%d')
+	        str = str.replace(/\?(\d+)/g, function(match, capture) { opts.value_ix++; return '?' + parseInt(capture, 10) + orig_val_ix - 1; });
+	    }
+
+	    // inject numbers into placeholders if numbers are required
+	    if (opts.placeholder == '$%d')
+	      str = str.replace(/\$(?!\d)/g, function() { return '$' + opts.value_ix++; });
+	    else if (opts.placeholder == '?%d')
+	      str = str.replace(/\?(?!\d)/g, function() { return '?' + opts.value_ix++; });
+
+	    if (!opts.parameterized) {
+	      // replace placeholders with inline values
+	      if (opts.placeholder == '$%d')
+	        str = str.replace(/\$(\d+)/g, replacer);
+	      else if (opts.placeholder == '?%d')
+	        str = str.replace(/\?(\d+)/g, replacer);
+	      else if (opts.placeholder == '$')
+	        str = str.replace(/\$/g, replacer);
+	      else if (opts.placeholder == '?')
+	        str = str.replace(/\?/g, replacer);
+	      else
+	        throw new Error('Unsupported placeholder: "' + opts.placeholder + '"');
+	    }
+
+	    return str;
+	  };
+
+	  // val() wrapper allows a value (string/number/etc) where SQL (column/table/etc) is expected
+	  sql.val = val;
+	  function val(_val) {
+	    if (!(this instanceof val))
+	      return new val(_val);
+	    this.val = _val;
+	  }
+
+	  // mechanism to easily define clauses for SQL statements
+	  [Select, Insert, Update, Delete].forEach(function(stmt) {
+	    stmt.defineClause = function(clause_id, template, opts) {
+	      opts = opts || {};
+	      var clauses = this.prototype.clauses = this.prototype.clauses || [];
+
+	      var templ_fn = template;
+	      if (typeof templ_fn != 'function')
+	        templ_fn = function(opts) { return templ(template, this, opts); };
+	      this.prototype[clause_id + 'ToString'] = templ_fn;
+	      
+	      var index;
+	      if (opts.after || opts.before) {
+	        index = clauses.indexOf(opts.after || opts.before);
+	        if (index == -1)
+	          throw new Error('Error adding clause ' + clause_id + ': dependent clause "' + opts.after + '" not found');
+	        
+	        if (opts.after)
+	          index++;
+	      }
+	      else {
+	        index = clauses.length;
+	      }
+	      clauses.splice(index, 0, clause_id);
+	    };
+	  });
+
+	  // SELECT statement
+	  sql.select = inherits(Select, Statement);
+	  function Select() {
+	    if (!(this instanceof Select))
+	      return new Select(argsToArray(arguments));
+
+	    Select.super_.call(this, 'select');
+	    return this.select.apply(this, arguments);
+	  }
+
+	  Select.prototype.select = function() {
+	    return this._addListArgs(arguments, '_columns');
+	  };
+	  Select.prototype.distinct = function() {
+	    this._distinct = true;
+	    return this._addListArgs(arguments, '_columns');
+	  };
+	  Select.prototype.into = Select.prototype.intoTable = function(tbl) {
+	    this._into = tbl;
+	    return this;
+	  };
+	  Select.prototype.intoTemp = Select.prototype.intoTempTable = function(tbl) {
+	    this._temp = true;
+	    this._into = tbl;
+	    return this;
+	  };
+	  Select.prototype.from = function() {
+	    return this._addListArgs(arguments, '_from');
+	  };
+
+	  var join_methods = {
+	    'join': 'INNER', 'innerJoin': 'INNER',
+	    'leftJoin': 'LEFT', 'leftOuterJoin': 'LEFT',
+	    'rightJoin': 'RIGHT', 'rightOuterJoin': 'RIGHT',
+	    'fullJoin': 'FULL', 'fullOuterJoin': 'FULL',
+	    'naturalJoin': 'NATURAL INNER', 'naturalInnerJoin': 'NATURAL INNER',
+	    'naturalLeftJoin': 'NATURAL LEFT', 'naturalLeftOuterJoin': 'NATURAL LEFT',
+	    'naturalRightJoin': 'NATURAL RIGHT', 'naturalRightOuterJoin': 'NATURAL RIGHT',
+	    'naturalFullJoin': 'NATURAL FULL', 'naturalFullOuterJoin': 'NATURAL FULL',
+	    'crossJoin': 'CROSS'
+	  };
+	  Object.keys(join_methods).forEach(function(method) {
+	    Select.prototype[method] = function join() {
+	      return this._addJoins(arguments, join_methods[method]);
+	    };
+	  });
+	  Select.prototype.on = function(on) {
+	    var last_join = this.joins[this.joins.length - 1];
+	    if (_.isArray(last_join.on) && !_.isEmpty(last_join.on))
+	      throw new Error('Error adding clause ON: ' + last_join.left_tbl + ' JOIN ' + last_join.tbl + ' already has a USING clause.');
+	    if (isExpr(on)) {
+	      last_join.on = on;
+	    }
+	    else {
+	      if (!last_join.on || (_.isArray(last_join.on))) // Instantiate object, including if it's an empty array from .using().
+	        last_join.on = {};
+	      _.extend(last_join.on, argsToObject(arguments));
+	    }
+	    return this;
+	  };
+	  Select.prototype.using = function(columns) {
+	    var last_join = this.joins[this.joins.length - 1];
+	    if (!_.isEmpty(last_join.on) && !_.isArray(last_join.on))
+	      throw new Error('Error adding clause USING: ' + last_join.left_tbl + ' JOIN ' + last_join.tbl + ' already has an ON clause.');
+
+	    if (_.isEmpty(last_join.on))
+	      last_join.on = []; // Using _.isEmpty tolerates overwriting of empty {}.
+	    last_join.on = _.union(last_join.on, argsToArray(arguments));
+	    return this;
+	  };
+
+	  Select.prototype.where = Select.prototype.and = function() {
+	    return this._addExpression(arguments, '_where');
+	  };
+	  Select.prototype.having = function() {
+	    return this._addExpression(arguments, '_having');
+	  };
+	  Select.prototype.groupBy = Select.prototype.group = function() {
+	    return this._addListArgs(arguments, '_groupBy');
+	  };
+	  Select.prototype.orderBy = Select.prototype.order = function() {
+	    return this._addListArgs(arguments, '_orderBy');
+	  };
+	  Select.prototype.of = function() {
+	    return this._addListArgs(arguments, '_of');
+	  };
+
+	  Select.prototype.forUpdate = function() {
+	    this._forUpdate = true;
+	    return this;
+	  };
+	  Select.prototype.noWait = function() {
+	    this._noWait = true;
+	    return this;
+	  };
+
+	  // TODO: Don't we need to keep track of the order of UNION, INTERSECT, etc, clauses?
+	  var compounds = {
+	    'union': 'UNION', 'unionAll': 'UNION ALL',
+	    'intersect': 'INTERSECT', 'intersectAll': 'INTERSECT ALL',
+	    'except': 'EXCEPT', 'exceptAll': 'EXCEPT ALL'
+	  };
+	  _.forEach(compounds, function(value, key) {
+	    Select.prototype[key] = function() {
+	      var stmts = argsToArray(arguments);
+	      if (!stmts.length) {
+	        var stmt = new Select();
+	        stmt.prev_stmt = this;
+	        stmts = [stmt];
+	      }
+
+	      this._add(stmts, '_' + key);
+
+	      if (stmt)
+	        return stmt;
+	      else
+	        return this;
+	    };
+	  });
+
+	  // subquery aliasing
+	  Select.prototype._toNestedString = function(opts) {
+	    return '(' + this._toString(opts) + ')' + this._aliasToString(opts);
+	  };
+
+	  Select.prototype._aliasToString = function(opts) {
+	    if (!this._alias)
+	      return '';
+
+	    return ' ' + autoQuote(this._alias);
+	  };
+
+	  Select.prototype.as = function(alias) {
+	    this._alias = alias;
+	    return this;
+	  };
+
+	  Select.prototype._toString = function _toString(opts) {
+	    if (!this._columns.length)
+	      this._columns = ['*'];
+	    return Select.super_.prototype._toString.apply(this, arguments);
+	  };
+
+	  Select.defineClause('select', 'SELECT {{#if _distinct}}DISTINCT {{/if}}{{#if _columns}}{{columns _columns}}{{/if}}');
+	  Select.defineClause('into', '{{#if _into}}INTO {{#if _temp}}TEMP {{/if}}{{table _into}}{{/if}}');
+	  Select.defineClause('from', function(opts) {
+	    if (!this._from)
+	      return;
+	    var result = 'FROM ' + handleTables(this._from, opts);
+	    if (this.joins)
+	      result += ' ' + _.invoke(this.joins, 'toString', opts).join(' ');
+	    return result;
+	  });
+	  Select.defineClause('where', '{{#if _where}}WHERE {{expression _where}}{{/if}}');
+	  Select.defineClause('groupBy', '{{#if _groupBy}}GROUP BY {{columns _groupBy}}{{/if}}');
+	  Select.defineClause('having', '{{#if _having}}HAVING {{expression _having}}{{/if}}');
+
+	  _.forEach(compounds, function(sql_keyword, clause_id) {
+	    Select.defineClause(clause_id, function(opts) {
+	      var arr = this['_' + clause_id];
+	      if (arr) {
+	        return arr.map(function(stmt) {
+	          return sql_keyword + ' ' + stmt._toString(opts);
+	        }).join(' ');
+	      }
+	    });
+	  });
+
+	  Select.defineClause('orderBy', '{{#if _orderBy}}ORDER BY {{columns _orderBy}}{{/if}}');
+	  Select.defineClause('forUpdate', '{{#if _forUpdate}}FOR UPDATE{{#if _of}} OF {{columns _of}}{{/if}}{{#if _noWait}} NO WAIT{{/if}}{{/if}}');
+
+
+	  // INSERT statement
+	  sql.insert = sql.insertInto = inherits(Insert, Statement);
+	  function Insert(tbl, values) {
+	    if (!(this instanceof Insert)) {
+	      if (typeof values == 'object' && !_.isArray(values))
+	        return new Insert(tbl, values);
+	      else
+	        return new Insert(tbl, argsToArray(_.toArray(arguments).slice(1)));
+	    }
+
+	    Insert.super_.call(this, 'insert');
+	    return this.into.apply(this, arguments);
+	  };
+
+	  Insert.prototype.into = function into(tbl, values) {
+	    if (tbl)
+	      this._table = tbl;
+
+	    if (values) {
+	      if (isPlainObject(values) || (_.isArray(values) && isPlainObject(values[0]))) {
+	        this.values(values);
+	      }
+	      else if (values.length) {
+	        this._split_keys_vals_mode = true;
+	        this._values = [{}];
+	        var val_arr = argsToArray(_.toArray(arguments).slice(1));
+	        _.forEach(val_arr, function(key) {
+	          this._values[0][key] = null;
+	        }.bind(this));
+	      }
+	    }
+	    return this;
+	  };
+	  Insert.prototype.values = function values() {
+	    if (this._split_keys_vals_mode) {
+	      var outer_arr;
+	      if (_.isArray(arguments[0]) && _.isArray(arguments[0][0]))
+	        outer_arr = arguments[0];
+	      else
+	        outer_arr = [argsToArray(arguments)];
+
+	      var keys = _.keys(this._values[0]);
+	      _.forEach(outer_arr, function(args, outer_ix) {
+	        if (!this._values[outer_ix])
+	          this._values[outer_ix] = {};
+
+	        _.forEach(keys, function(key, ix) {
+	          this._values[outer_ix][key] = args[ix];
+	        }.bind(this));
+	      }.bind(this));
+	    }
+	    else {
+	      if (_.isArray(arguments[0]) && isPlainObject(arguments[0][0])) {
+	        if (!this._values)
+	          this._values = [];
+	        this._values = this._values.concat(arguments[0]);
+	      }
+	      else {
+	        if (!this._values)
+	          this._values = [{}];
+	        _.extend(this._values[0], argsToObject(arguments));
+	      }
+	    }
+	    return this;
+	  };
+	  Insert.prototype.select = function select() {
+	    this._select = sql.select.apply(null, arguments);
+	    this._select.prev_stmt = this;
+	    return this._select;
+	  };
+
+	  Insert.defineClause('insert', 'INSERT');
+	  Insert.defineClause('into', '{{#if _table}}INTO {{table _table}}{{/if}}');
+	  Insert.defineClause('columns', function(opts) {
+	    if (!this._values) return '';
+	    return '(' + handleColumns(_.keys(this._values[0]), opts) + ')';
+	  });
+	  Insert.defineClause('values', function(opts) {
+	    if (this._select)
+	      return this._select._toString(opts);
+	    else
+	      return 'VALUES ' + _.map(this._values, function(values) {
+	        return '(' + handleValues(_.values(values), opts).join(', ') + ')';
+	      }).join(', ');
+	  });
+
+
+	  // UPDATE statement
+	  sql.update = inherits(Update, Statement);
+	  function Update(tbl, values) {
+	    if (!(this instanceof Update))
+	      return new Update(tbl, argsToObject(_.toArray(arguments).slice(1)));
+
+	    Update.super_.call(this, 'update');
+	    this._table = tbl;
+	    if (values)
+	      this.values(values);
+	    return this;
+	  };
+
+	  Update.prototype.set = Update.prototype.values = function set() {
+	    return this._addToObj(argsToObject(arguments), '_values');
+	  };
+
+	  Update.prototype.where = Update.prototype.and = Select.prototype.where;
+
+	  Update.defineClause('update', 'UPDATE');
+	  Update.defineClause('table', '{{table _table}}');
+	  Update.defineClause('set', function(opts) {
+	    return 'SET ' + _.map(this._values, function(value, key) {
+	      return handleColumn(key, opts) + ' = ' + handleValue(value, opts);
+	    }).join(', ');
+	  });
+	  Update.defineClause('where', '{{#if _where}}WHERE {{expression _where}}{{/if}}');
+
+
+	  // DELETE statement
+	  sql.delete = sql.deleteFrom = inherits(Delete, Statement);
+	  function Delete(tbl) {
+	    if (!(this instanceof Delete))
+	      return new Delete(tbl);
+
+	    Delete.super_.call(this, 'delete');
+	    if (tbl)
+	      this._from = tbl;
+	    return this;
+	  }
+	  Delete.prototype.from = function(tbl) {
+	    this._from = tbl;
+	    return this;
+	  };
+	  Delete.prototype.where = Delete.prototype.and = Select.prototype.where;
+
+	  Delete.defineClause('delete', 'DELETE FROM {{table _from}}');
+	  Delete.defineClause('where', '{{#if _where}}WHERE {{expression _where}}{{/if}}');
+
+
+	  // base statement
+	  sql.Statement = Statement;
+	  function Statement(type) {
+	    this.type = type;
+	  };
+
+	  // TODO: this seems to not handle... a *lot* of properties
+	  Statement.prototype.clone = function clone() {
+	    var ctor = _.find([Select, Insert, Update, Delete], function(ctor) {
+	      return this instanceof ctor;
+	    }.bind(this));
+
+	    var stmt = _.extend(new ctor(), this);
+	    if (stmt._where)
+	      stmt._where = stmt._where.clone();
+	    if (stmt.joins)
+	      stmt.joins = stmt.joins.slice();
+	    if (stmt._values) {
+	      if (_.isArray(stmt._values)) {
+	        stmt._values = _.map(stmt._values, function(val) {
+	          return _.clone(val);
+	        });
+	      }
+	      else {
+	        stmt._values = _.clone(stmt._values);
+	      }
+	    }
+	    return stmt;
+	  };
+
+	  Statement.prototype.toParams = function toParams(opts) {
+	    if (this.prev_stmt)
+	      return this.prev_stmt.toParams(opts);
+
+	    if (!opts)
+	      opts = {};
+	    _.extend(opts, {'parameterized': true, 'values': [], 'value_ix': 1});
+	    _.defaults(opts, {'placeholder': '$%d'});
+	    var sql = this._toString(opts);
+
+	    return {'text': sql, 'values': opts.values};
+	  };
+
+	  Statement.prototype.toString = function toString(opts) {
+	    if (!opts)
+	      opts = {};
+	    _.defaults(opts, {'placeholder': '$%d'});
+
+	    if (this.prev_stmt)
+	      return this.prev_stmt.toString(opts);
+	    else
+	      return this._toString(opts).trim();
+	  };
+
+	  Statement.prototype._toString = function(opts) {
+	    var result = '';
+	    this.clauses.forEach(function(clause) {
+	      var rlt = this[clause + 'ToString'](opts);
+	      if (rlt)
+	        result += rlt + ' ';
+	    }.bind(this));
+	    return result.trim();
+	  };
+
+	  Statement.prototype._add = function _add(arr, name) {
+	    if (!this[name])
+	      this[name] = [];
+
+	    this[name] = this[name].concat(arr);
+	    return this;
+	  };
+
+	  Statement.prototype._addToObj = function _addToObj(obj, name) {
+	    if (!this[name])
+	      this[name] = {};
+
+	    _.extend(this[name], obj);
+	    return this;
+	  };
+
+	  Statement.prototype._addListArgs = function _addListArgs(args, name) {
+	    return this._add(argsToArray(args), name);
+	  };
+
+	  Statement.prototype._addExpression = function _addExpression(args, name) {
+	    if (args.length <= 1 && (args[0] == null || _.isEmpty(args[0])))
+	      return this;
+
+	    if (!this[name])
+	      this[name] = sql.and();
+	    var exprs = argsToExpressions(args);
+	    this[name].expressions = this[name].expressions.concat(exprs);
+	    return this;
+	  };
+
+	  Statement.prototype._addJoins = function _addJoins(args, type) {
+	    if (!this.joins)
+	      this.joins = [];
+
+	    if (typeof args[1] == 'object') {
+	      var tbls = [args[0]];
+	      var on = args[1];
+	      var opts = args[2];
+	    }
+	    else {
+	      tbls = argsToArray(args);
+	    }
+
+	    _.forEach(tbls, function(tbl) {
+	      var left_tbl = this.last_join || (this._from && this._from[this._from.length - 1]);
+	      this.joins.push(new Join(tbl, left_tbl, on, type));
+	    }.bind(this));
+
+	    this.last_join = tbls[tbls.length - 1];
+	    return this;
+	  };
+
+
+	  function Join(tbl, left_tbl, on, type) {
+	    this.tbl = tbl;
+	    this.left_tbl = left_tbl;
+	    this.on = on;
+	    this.type = type;
+	  }
+	  sql.Join = Join;
+	  Join.prototype.autoGenerateOn = function autoGenerateOn(tbl, left_tbl) {
+	    return sql._joinCriteria(getTable(left_tbl), getAlias(left_tbl), getTable(tbl), getAlias(tbl));
+	  };
+	  Join.prototype.toString = function toString(opts) {
+	    var on = this.on, tbl = handleTable(this.tbl, opts);
+
+	    // Natural or cross join, no criteria needed.
+	    // Debt: Determining whether join is natural/cross by reading the string is slightly hacky... but works.
+	    if (/^(natural|cross)/i.test(this.type))
+	      return this.type + ' JOIN ' + tbl;
+	    
+	    // Not a natural or cross, check for criteria.
+	    if (!on || _.isEmpty(on)) {
+	      if (sql._joinCriteria) {
+	        var left_tbl = handleTable(this.left_tbl, opts);
+	        on = this.autoGenerateOn(tbl, left_tbl);
+	      }
+	      else {
+	        throw new Error('No join criteria supplied for "' + getAlias(tbl) + '" join');
+	      }
+	    }
+
+	    // Array value for on indicates join using "using", rather than "on".
+	    if (_.isArray(on)) {
+	      on = _.map(on, function (column) {
+	        return handleColumn(column);
+	      }).join(', ');
+	      return this.type + ' JOIN ' + tbl + ' USING (' + on + ')';
+	    }
+
+	    // Join using "on".
+	    if (isExpr(on)) {
+	      on = on.toString(opts);
+	    }
+	    else {
+	      on = _.map(_.keys(on), function(key) {
+	        return handleColumn(key, opts) + ' = ' + handleColumn(on[key], opts);
+	      }).join(' AND ')
+	    }
+	    return this.type + ' JOIN ' + tbl + ' ON ' + on;
+	  };
+
+	  // handle an array, a comma-delimited str or separate args
+	  function argsToArray(args) {
+	    if (_.isArray(args[0]))
+	      return args[0];
+	    else if (typeof args[0] == 'string' && args[0].indexOf(',') > -1)
+	      return _.invoke(args[0].split(','), 'trim');
+	    else
+	      return _.toArray(args);
+	  }
+
+	  function argsToObject(args) {
+	    if (typeof args[0] == 'object')
+	      return args[0];
+
+	    var obj = {};
+	    if (args[0] != null)
+	      obj[args[0]] = args[1];
+	    return obj;
+	  }
+
+	  function argsToExpressions(args) {
+	    var flat_args = _.all(args, function(arg) {
+	      return typeof arg != 'object' || arg instanceof val || arg instanceof sql || arg == null;
+	    });
+	    if (flat_args) {
+	      if (args[0] instanceof sql && args.length == 1)
+	        return [args[0]];
+	      else
+	        return [sql.equal(args[0], args[1])];
+	    }
+	    else {
+	      var exprs = [];
+	      _.each(args, function(expr) {
+	        if (isExpr(expr))
+	          exprs.push(expr);
+	        else
+	          exprs = exprs.concat(objToEquals(expr));
+	      });
+	      return exprs;
+	    }
+	  }
+
+
+	  // SQL Expression language
+	  sql.and = function and() { return new Group('AND', argsToArray(arguments)); };
+	  sql.or = function or() { return new Group('OR', argsToArray(arguments)); };
+
+	  function Group(op, expressions) {
+	    this.op = op;
+	    this.expressions = [];
+	    _.forEach(expressions, function(expr) {
+	      if (isExpr(expr))
+	        this.expressions.push(expr);
+	      else
+	        this.expressions = this.expressions.concat(objToEquals(expr));
+	    }.bind(this));
+	  }
+	  sql.Group = Group;
+	  Group.prototype.clone = function clone() {
+	    return new Group(this.op, _.invoke(this.expressions, 'clone'));
+	  };
+	  Group.prototype.toString = function toString(opts) {
+	    opts = opts||default_opts;
+	    var sql = _.map(this.expressions, function(expr) {
+	      return expr.toString(opts);
+	    }).join(' ' + this.op + ' ');
+	    if (this.expressions.length > 1 && this.parens !== false)
+	      sql = '(' + sql + ')';
+	    return sql;
+	  };
+
+	  sql.not = function not(expr) {
+	    return new Not(expr);
+	  };
+	  function Not(expr) {
+	    if (!isExpr(expr))
+	      this.expressions = [sql.and(expr)];
+	    else
+	      this.expressions = [expr];
+	  }
+	  sql.Not = Not;
+	  Not.prototype.clone = function clone() {
+	    return new Not(this.expressions[0].clone());
+	  };
+	  Not.prototype.toString = function toString(opts) {
+	    return 'NOT ' + this.expressions[0].toString(opts);
+	  };
+
+	  var binary_ops = {
+	    'eq': '=', 'equal': '=', 'notEq': '<>',
+	    'lt': '<', 'lte': '<=', 'gt': '>', 'gte': '>='
+	  };
+	  var quantifiers = ['All', 'Any'];
+
+	  for (var name in binary_ops) {
+	    sql[name] = function(name, col, val) {
+	      return new Binary(binary_ops[name], col, val);
+	    }.bind(null, name);
+
+	    _.forEach(quantifiers, function(name, quantifier) {
+	      sql[name + quantifier] = function(col, val) {
+	        return new Binary(binary_ops[name], col, val, quantifier.toUpperCase() + ' ');
+	      };
+	    }.bind(null, name));
+	    sql[name + 'Some'] = sql[name + 'Any'];
+	  }
+
+	  function Binary(op, col, val, quantifier) {
+	    if (val == null) {
+	      if (op == '=')
+	        return sql.isNull(col);
+	      else if (op == '<>')
+	        return sql.isNotNull(col);
+	    }
+
+	    this.op = op;
+	    this.col = col;
+	    this.val = val;
+	    this.quantifier = quantifier || '';
+	  }
+	  sql.Binary = Binary;
+	  Binary.prototype.clone = function clone() {
+	    return new Binary(this.op, this.col, this.val);
+	  };
+	  Binary.prototype.toString = function toString(opts) {
+	    var sql = handleColumn(this.col, opts);
+	    return sql + ' ' + this.op + ' ' + this.quantifier + handleValue(this.val, opts);
+	  }
+
+	  sql.like = function like(col, val, escape_char) { return new Like(col, val, escape_char); };
+	  function Like(col, val, escape_char) {
+	    this.col = col;
+	    this.val = val;
+	    this.escape_char = escape_char;
+	  }
+	  sql.Like = Like;
+	  Like.prototype.clone = function clone() {
+	    return new Like(this.col, this.val, this.escape_char);
+	  };
+	  Like.prototype.toString = function toString(opts) {
+	    var sql = handleColumn(this.col, opts) + ' LIKE ' + handleValue(this.val, opts);
+	    if (this.escape_char)
+	      sql += " ESCAPE '" + this.escape_char + "'";
+	    return sql;
+	  }
+
+	  sql.between = function between(col, val1, val2) { return new Between(col, val1, val2); };
+	  function Between(col, val1, val2) {
+	    this.col = col;
+	    this.val1 = val1;
+	    this.val2 = val2;
+	  }
+	  sql.Between = Between;
+	  Between.prototype.clone = function clone() {
+	    return new Between(this.col, this.val1, this.val2);
+	  };
+	  Between.prototype.toString = function(opts) {
+	    return handleColumn(this.col, opts) + ' BETWEEN ' + handleValue(this.val1, opts) + ' AND ' + handleValue(this.val2, opts);
+	  };
+
+	  sql.isNull = function isNull(col) { return new Unary('IS NULL', col); };
+	  sql.isNotNull = function isNotNull(col) { return new Unary('IS NOT NULL', col); };
+
+	  function Unary(op, col) {
+	    this.op = op;
+	    this.col = col;
+	  }
+	  sql.Unary = Unary;
+	  Unary.prototype.clone = function clone() {
+	    return new Unary(this.op, this.col);
+	  };
+	  Unary.prototype.toString = function toString(opts) {
+	    return handleColumn(this.col, opts) + ' ' + this.op;
+	  };
+
+	  sql['in'] = function(col, list) {
+	    if (_.isArray(list) || list instanceof Statement)
+	      return new In(col, list);
+	    else
+	      return new In(col, _.toArray(arguments).slice(1));
+	  };
+
+	  function In(col, list) {
+	    this.col = col;
+	    this.list = list;
+	  }
+	  sql.In = In;
+	  In.prototype.clone = function clone() {
+	    return new In(this.col, this.list.slice());
+	  };
+	  In.prototype.toString = function toString(opts) {
+	    var col_sql = handleColumn(this.col, opts);
+	    var sql;
+	    if (_.isArray(this.list))
+	      sql = handleValues(this.list, opts).join(', ');
+	    else if (this.list instanceof Statement)
+	      sql = this.list._toString(opts);
+	    
+	    return col_sql + ' IN (' + sql + ')';
+	  };
+
+	  sql.exists = function(subquery) { return new Exists(subquery); }
+	  function Exists(subquery) {
+	    this.subquery = subquery;
+	  };
+	  sql.Exists = Exists;
+	  Exists.prototype.clone = function clone() {
+	    return new Exists(this.subquery.clone());
+	  };
+	  Exists.prototype.toString = function toString(opts) {
+	    return 'EXISTS (' + this.subquery._toString(opts) + ')';
+	  };
+
+
+	  function getAlias(tbl) {
+	    var separator = ' AS ';
+	    var sep_ix = tbl.indexOf(separator);
+	    if (sep_ix == -1) {
+	      separator = ' ';
+	      sep_ix = tbl.indexOf(separator);
+	    }
+	    if (sep_ix > -1)
+	      return tbl.slice(sep_ix + separator.length);
+	    return tbl;
+	  }
+	  function getTable(tbl) {
+	    var space_ix = tbl.indexOf(' ');
+	    if (space_ix > -1)
+	      tbl = tbl.slice(0, space_ix);
+	    if (tbl[0] == '"' && tbl[tbl.length - 1] == '"')
+	      tbl = tbl.slice(1, -1);
+	    return tbl;
+	  }
+
+	  function isExpr(expr) {
+	    return expr instanceof sql || expr instanceof Group || expr instanceof Not || expr instanceof Binary || expr instanceof Unary || expr instanceof In || expr instanceof Like || expr instanceof Between || expr instanceof Exists;
+	  }
+
+	  // raw objects default to equals
+	  // {first_name: 'Fred', last_name = 'Flintstone'} ->
+	  //   [equals('first_name', 'Fred'), equals('last_name', 'Flintstone')]
+	  function objToEquals(obj) {
+	    var expressions = [];
+	    for (var col in obj) {
+	      expressions.push(sql.equal(col, obj[col]));
+	    }
+	    return expressions;
+	  }
+
+	  function handleExpression(expr, opts) {
+	    expr.parens = false;
+	    if (expr.expressions && expr.expressions.length == 1)
+	      expr.expressions[0].parens = false;
+	    return expr.toString(opts);
+	  }
+	  sql._handleExpression = handleExpression;
+
+	  function handleValues(vals, opts) {
+	    return vals.map(function(val) {
+	      return handleValue(val, opts);
+	    });
+	  }
+	  sql._handleValues = handleValues;
+
+	  function handleValue(val, opts) {
+	    if (val instanceof Statement)
+	      return '(' + val._toString(opts) + ')';
+
+	    if (val instanceof sql)
+	      return val.toString(opts);
+
+	    if (opts.parameterized) {
+	      opts.values.push(val);
+	      return opts.placeholder.replace('%d', opts.value_ix++);
+	    }
+
+	    return sql.convert(val);
+	  }
+	  sql._handleValue = handleValue;
+
+	  sql.convert = function(val) {
+	    for (var type in sql.conversions)
+	      if (_['is' + type].call(_, val))
+	        return sql.conversions[type](val);
+
+	    throw new Error('value is of an unsupported type and cannot be converted to SQL: ' + val);
+	  }
+
+	  sql.conversions = {
+	    'String': function(str) { return "'" + str.replace(/'/g, "''") + "'"; },
+	    'Null': function() { return 'null'; },
+	    'Undefined': function() { return 'null'; },
+	    'Number': function(num) { return num.toString(); },
+	    'Boolean': function(bool) { return bool.toString().toUpperCase(); },
+	    'Date': function(dt) { return "TIMESTAMP WITH TIME ZONE '" + dt.toISOString().replace('T', ' ').replace('Z', '+00:00') + "'"; },
+	    'Array': function(arr) { return '{' + arr.map(sql.convert).join(', ') + '}'; }
+	  };
+
+	  function handleTables(tables, opts) {
+	    return tables.map(function(tbl) { return handleTable(tbl, opts); }).join(', ');
+	  }
+	  sql._handleTables = handleTables;
+
+	  function handleTable(table, opts) {
+	    return handleColumn(expandAlias(table), opts);
+	  }
+	  sql._handleTable = handleTable;
+
+	  function handleColumns(cols, opts) {
+	    return cols.map(function(col) { return handleColumn(col, opts); }).join(', ');
+	  }
+	  sql._handleColumns = handleColumns;
+
+	  // handles prefixes before a '.' and suffixes after a ' '
+	  // for example: 'tbl.order AS tbl_order' -> 'tbl."order" AS tbl_order'
+	  var unquoted_regex = /^[\w\.]+(( AS)? \w+)?$/i;
+	  function handleColumn(expr, opts) {
+	    if (expr instanceof Statement)
+	      return expr._toNestedString(opts);
+
+	    if (expr instanceof val)
+	      return handleValue(expr.val, opts);
+
+	    if (expr instanceof sql)
+	      return expr.toString(opts);
+
+	    if (unquoted_regex.test(expr))
+	      return quoteColOrTbl(expr);
+	    else
+	      return expr;
+	  }
+	  sql._handleColumn = handleColumn;
+
+	  function quoteColOrTbl(expr) {
+	    var prefix = '';
+	    var dot_ix = expr.lastIndexOf('.');
+	    if (dot_ix > -1) {
+	      prefix = expr.slice(0, dot_ix);
+	      expr = expr.slice(dot_ix + 1);
+	    }
+
+	    var suffix = '';
+	    var space_ix = expr.indexOf(' ');
+	    if (space_ix > -1) {
+	      suffix = expr.slice(space_ix);
+	      expr = expr.slice(0, space_ix);
+	    }
+
+	    return (prefix ? autoQuote(prefix) + '.' : '') + autoQuote(expr) + suffix;
+	  }
+	  sql._quoteColOrTbl = quoteColOrTbl;
+
+	  // auto-quote tbl & col names if they have caps or are reserved words
+	  sql._autoQuoteChar = '"';
+	  
+	  function autoQuote(str) {
+	    if (/^\w+$/.test(str) && (/[A-Z]/.test(str) || str in reserved))
+	      return sql._autoQuoteChar + str + sql._autoQuoteChar;
+	    return str;
+	  }
+	  sql._autoQuote = autoQuote;
+
+	  // Postgres: Table C-1 of http://www.postgresql.org/docs/9.3/static/sql-keywords-appendix.html
+	  // SQLite: http://www.sqlite.org/lang_keywords.html
+	  var reserved = ['all', 'analyse', 'analyze', 'and', 'any', 'array', 'as', 'asc', 'asymmetric', 'authorization', 'both', 'case', 'cast', 'check', 'collate', 'collation', 'column', 'constraint', 'create', 'cross', 'current_catalog', 'current_date', 'current_role', 'current_time', 'current_timestamp', 'current_user', 'default', 'deferrable', 'desc', 'distinct', 'do', 'else', 'end', 'except', 'false', 'fetch', 'for', 'foreign', 'freeze', 'from', 'full', 'grant', 'group', 'having', 'ilike', 'in', 'initially', 'inner', 'intersect', 'into', 'is', 'isnull', 'join', 'lateral', 'leading', 'left', 'like', 'limit', 'localtime', 'localtimestamp', 'natural', 'not', 'notnull', 'null', 'offset', 'on', 'only', 'or', 'order', 'outer', 'over', 'overlaps', 'placing', 'primary', 'references', 'returning', 'right', 'select', 'session_user', 'similar', 'some', 'symmetric', 'table', 'then', 'to', 'trailing', 'true', 'union', 'unique', 'user', 'using', 'variadic', 'verbose', 'when', 'where', 'window', 'with', 'abort', 'action', 'add', 'after', 'all', 'alter', 'analyze', 'and', 'as', 'asc', 'attach', 'autoincrement', 'before', 'begin', 'between', 'by', 'cascade', 'case', 'cast', 'check', 'collate', 'column', 'commit', 'conflict', 'constraint', 'create', 'cross', 'current_date', 'current_time', 'current_timestamp', 'database', 'default', 'deferrable', 'deferred', 'delete', 'desc', 'detach', 'distinct', 'drop', 'each', 'else', 'end', 'escape', 'except', 'exclusive', 'exists', 'explain', 'fail', 'for', 'foreign', 'from', 'full', 'glob', 'group', 'having', 'if', 'ignore', 'immediate', 'in', 'index', 'indexed', 'initially', 'inner', 'insert', 'instead', 'intersect', 'into', 'is', 'isnull', 'join', 'key', 'left', 'like', 'limit', 'match', 'natural', 'no', 'not', 'notnull', 'null', 'of', 'offset', 'on', 'or', 'order', 'outer', 'plan', 'pragma', 'primary', 'query', 'raise', 'references', 'regexp', 'reindex', 'release', 'rename', 'replace', 'restrict', 'right', 'rollback', 'row', 'savepoint', 'select', 'set', 'table', 'temp', 'temporary', 'then', 'to', 'transaction', 'trigger', 'union', 'unique', 'update', 'using', 'vacuum', 'values', 'view', 'virtual', 'when', 'where'];
+	  reserved = _.object(reserved, reserved);
+	  sql._reserved = reserved;
+
+	  function isPlainObject(val) {
+	    return _.isObject(val) && !_.isArray(val);
+	  }
+
+
+	  // optional conveniences
+	  sql._aliases = {};
+	  sql.aliasExpansions = function aliasExpansions(aliases) {
+	    sql._aliases = aliases;
+	  }
+	  function expandAlias(tbl) {
+	    return typeof tbl == 'string' && tbl in sql._aliases ? sql._aliases[tbl] + ' ' + tbl : tbl;
+	  }
+
+	  sql.joinCriteria = function joinCriteria(fn) {
+	    if (!fn) return sql._joinCriteria;
+	    sql._joinCriteria = fn;
+	  };
+
+
+	  // uber-simple mini-templating language to make it easy to define clauses
+	  // handlebars-like syntax, supports helpers and nested blocks
+	  // does not support context changes, the dot operator on properties or HTML escaping
+	  function templ(str, ctx, opts) {
+	    var result = '';
+	    var lastIndex = 0;
+
+	    var tmpl_re = /\{\{([#\/])?(\w+) ?(\w+)?\}\}/g;
+	    var m;
+	    while (m = tmpl_re.exec(str)) {
+	      var is_block = m[1];
+	      var is_start = m[1] == '#';
+	      if (m[3]) {
+	        var fn_name = m[2], attr = m[3];
+	        var helper = templ.helpers[fn_name];
+	      }
+	      else {
+	        var attr = m[2];
+	      }
+	      var val = ctx[attr];
+	      result += str.slice(lastIndex, m.index);
+
+	      if (is_block) {
+	        if (is_start) {
+	          var end_re = new RegExp("\\{\\{([#/])" + fn_name + ' ?(\\w+)?\\}\\}', 'g');
+	          end_re.lastIndex = tmpl_re.lastIndex;
+	          // incr & decr level 'til we find the end block that matches this start block
+	          var level = 1;
+	          while (level) {
+	            var end_m = end_re.exec(str);
+	            if (!end_m)
+	              throw new Error('End not found for block ' + fn_name);
+	            if (end_m[1] == '#')
+	              level++;
+	            else
+	              level--;
+	          }
+	          var contents = str.slice(tmpl_re.lastIndex, end_m.index);
+	          result += helper.call(ctx, val, opts, contents, ctx);
+	          lastIndex = tmpl_re.lastIndex = end_re.lastIndex;
+	        }
+	      }
+	      else {
+	        if (fn_name)
+	          result += helper.call(ctx, val, opts);
+	        else
+	          result += val;
+	        lastIndex = tmpl_re.lastIndex;
+	      }
+	    }
+	    result += str.slice(lastIndex);
+	    return result;
+	  }
+	  sql.templ = templ;
+
+	  templ.helpers = {
+	    'if': function(val, opts, contents, ctx) { return val ? templ(contents, ctx, opts) : ''; },
+	    'ifNotNull': function(val, opts, contents, ctx) { return val != null ? templ(contents, ctx, opts) : ''; },
+	    'columns': handleColumns,
+	    'table': handleTable,
+	    'tables': handleTables,
+	    'expression': handleExpression
+	  };
+
+	  // provided for browser support, based on https://gist.github.com/prust/5936064
+	  function inherits(ctor, superCtor) {
+	    function noop() {};
+
+	    if (Object.create) {
+	      ctor.super_ = superCtor;
+	      ctor.prototype = Object.create(superCtor.prototype, {
+	          constructor: {
+	              value: ctor,
+	              enumerable: false,
+	              writable: true,
+	              configurable: true
+	          }
+	      });
+	    }
+	    else {
+	      noop.prototype = superCtor.prototype;
+	      ctor.super_ = superCtor;
+	      ctor.prototype = new noop;
+	      ctor.prototype.constructor = ctor;
+	    }
+	    return ctor;
+	  }
+	  sql.inherits = inherits;
+
+	  sql._extension = function () {
+	    var ext = subclass(sql);
+
+	    _.forEach(_.keys(sql), function(prop_name) {
+	      ext[prop_name] = sql[prop_name];
+	    });
+
+	    ['select', 'insert', 'update', 'delete'].forEach(function (stmt) {
+	      var cls = sql[stmt];
+	      ext[stmt] = subclass(cls);
+	      ext[stmt].defineClause = cls.defineClause;
+	      ext[stmt].prototype.clauses = cls.prototype.clauses.slice();
+	    });
+	    ext.insertInto = ext.insert;
+	    ext.deleteFrom = ext.delete;
+
+	    return ext;
+	  }
+
+	  function subclass(base) {
+	    function cls() {
+	      if (!(this instanceof cls))
+	        return applyNew(cls, arguments);
+	      
+	      base.apply(this, arguments);
+	    }
+	    return inherits(cls, base);
+	  }
+
+	  // http://stackoverflow.com/a/8843181/194758
+	  function applyNew(cls, args) {
+	    args = _.toArray(args);
+	    args.unshift(null);
+	    return new (cls.bind.apply(cls, args));
+	  }
+
+	  if (is_common_js)
+	    module.exports = sql;
+	  else
+	    window.SqlBricks = sql;
+
+	})();
+
 
 /***/ },
 /* 10 */
-/***/ function(module, exports, __webpack_require__) {
+/***/ function(module, exports) {
 
-	/*
-	 * search.js: chainable search functions for Loggly
-	 *
-	 * (C) 2010 Charlie Robbins
-	 * MIT LICENSE
-	 *
-	 */
-
-	var events = __webpack_require__(4),
-	    util = __webpack_require__(5),
-	    qs = __webpack_require__(6),
-	    timespan = __webpack_require__(11),
-	    common = __webpack_require__(7);
-
-	//
-	// ### function Search (options, client, callback)
-	// #### @options {Object} Options for the search instance
-	// #### @client {Loggly} Loggly API client
-	// Chainable search object for Loggly API
-	//
-	var Search = exports.Search = function (options, client) {
-	  if (!options || (!options.query && !options.q)) {
-	    throw new Error('options.query is required to execute a Loggly search.');
-	  }
-
-	  events.EventEmitter.call(this);
-
-	  if (options.query) {
-	    options.q = options.query;
-	    delete options.query;
-	  }
-
-	  this.options = options;
-	  this.client  = client;
-
-	  //
-	  // If we're passed a callback, run immediately.
-	  //
-	  if (options.callback) {
-	    this.callback = options.callback;
-	    delete options.callback;
-	    this.run();
-	  }
-	};
-
-	//
-	// Inherit from events.EventEmitter
-	//
-	util.inherits(Search, events.EventEmitter);
-
-	//
-	// ### function run (callback)
-	// #### @callback {function} Continuation to respond to when complete
-	// Runs the search query for for this instance with the query, and
-	// other parameters that have been configured on it.
-	//
-	Search.prototype.run = function (callback) {
-	  var self = this,
-	      responded;
-
-	  //
-	  // Trim the search query
-	  //
-	  this.options.q.trim();
-
-	  //
-	  // Update the callback for this instance if it's passed
-	  //
-	  this.callback = callback || this.callback;
-	  if (!this.callback) {
-	    throw new Error('Cannot run search without a callback function.');
-	  }
-
-	  //
-	  // ### function respond (arguments...)
-	  // Responds only once.
-	  //
-	  function respond() {
-	    if (!responded) {
-	      responded = true;
-	      self.callback.apply(null, arguments);
-	    }
-	  }
-
-	  //
-	  // ### function awaitResults (rsid)
-	  // Checks the Loggly API on an interval for the
-	  // results from the specified `rsid`.
-	  //
-	  function awaitResults(rsid) {
-	    if (!rsid || !rsid.id) {
-	      return respond(rsid);
-	    }
-
-	    common.loggly({
-	      uri:  self.client.logglyUrl('events?' + qs.stringify({ rsid: rsid.id })),
-	      auth: self.client.auth,
-	      json: true
-	    }, respond, function (res, body) {
-	      var results;
-	      try { results = JSON.parse(body) }
-	      catch (ex) { return respond(ex) }
-	      respond(null, results);
-	    });
-	  }
-
-	  //
-	  // Check any time ranges (if supplied) to ensure
-	  // they are valid.
-	  //
-	  this._checkRange();
-
-	  common.loggly({
-	    uri:  this.client.logglyUrl('search?' + qs.stringify(this.options)),
-	    auth: this.client.auth,
-	    json: true
-	  }, this.callback, function (res, body) {
-	    var rsid;
-	    try { rsid = JSON.parse(body).rsid }
-	    catch (ex) { rsid = ex }
-
-	    self.emit('rsid', rsid);
-	    awaitResults(rsid);
-	  });
-
-	  return this;
-	};
-
-	//
-	// ### function _checkRange ()
-	// Checks if the range that has been configured for this
-	// instance is valid and updates if it is not.
-	//
-	Search.prototype._checkRange = function () {
-	  if (!this.options.until && !this.options.from) {
-	    return;
-	  }
-
-	  this.options.until = this.options.until || 'now';
-	  this.options.from  = this.options.from  || '-24h';
-
-	  if (!timespan.parseDate(this.options.until)) {
-	    this.options.until = 'now';
-	  }
-
-	  if (!timespan.parseDate(this.options.from)) {
-	    this.options.from = '-24h';
-	  }
-
-	  if (timespan.fromDates(this.options.from, this.options.until) < 0
-	    || this.options.until === this.options.from) {
-	    //
-	    // If the length of the timespan for this Search instance is
-	    // negative then set it to default values
-	    //
-	    this.options.until = 'now';
-	    this.options.from = '-24h';
-	  }
-
-	  return this;
-	};
-
+	module.exports = require("underscore");
 
 /***/ },
 /* 11 */
 /***/ function(module, exports) {
 
-	/*
-	* JavaScript TimeSpan Library
-	*
-	* Copyright (c) 2010 Michael Stum, Charlie Robbins
-	* 
-	* Permission is hereby granted, free of charge, to any person obtaining
-	* a copy of this software and associated documentation files (the
-	* "Software"), to deal in the Software without restriction, including
-	* without limitation the rights to use, copy, modify, merge, publish,
-	* distribute, sublicense, and/or sell copies of the Software, and to
-	* permit persons to whom the Software is furnished to do so, subject to
-	* the following conditions:
-	* 
-	* The above copyright notice and this permission notice shall be
-	* included in all copies or substantial portions of the Software.
-	* 
-	* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-	* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-	* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-	* NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-	* LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-	* OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-	* WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-	*/
+	'use strict';
 
-	//
-	// ### Time constants
-	//
-	var msecPerSecond = 1000,
-	    msecPerMinute = 60000,
-	    msecPerHour = 3600000,
-	    msecPerDay = 86400000;
+	module.exports = validate;
 
-	//
-	// ### Timespan Parsers
-	//
-	var timeSpanWithDays = /^(\d+):(\d+):(\d+):(\d+)(\.\d+)?/,
-	    timeSpanNoDays = /^(\d+):(\d+):(\d+)(\.\d+)?/;
-
-	//
-	// ### function TimeSpan (milliseconds, seconds, minutes, hours, days)
-	// #### @milliseconds {Number} Number of milliseconds for this instance.
-	// #### @seconds {Number} Number of seconds for this instance.
-	// #### @minutes {Number} Number of minutes for this instance.
-	// #### @hours {Number} Number of hours for this instance.
-	// #### @days {Number} Number of days for this instance.
-	// Constructor function for the `TimeSpan` object which represents a length
-	// of positive or negative milliseconds componentized into milliseconds, 
-	// seconds, hours, and days.
-	//
-	var TimeSpan = exports.TimeSpan = function (milliseconds, seconds, minutes, hours, days) {
-	  this.msecs = 0;
-	  
-	  if (isNumeric(days)) {
-	    this.msecs += (days * msecPerDay);
-	  }
-	  
-	  if (isNumeric(hours)) {
-	    this.msecs += (hours * msecPerHour);
-	  }
-	  
-	  if (isNumeric(minutes)) {
-	    this.msecs += (minutes * msecPerMinute);
-	  }
-	  
-	  if (isNumeric(seconds)) {
-	    this.msecs += (seconds * msecPerSecond);
-	  }
-	  
-	  if (isNumeric(milliseconds)) {
-	    this.msecs += milliseconds;
-	  }
-	};
-
-	//
-	// ## Factory methods
-	// Helper methods for creating new TimeSpan objects
-	// from various criteria: milliseconds, seconds, minutes,
-	// hours, days, strings and other `TimeSpan` instances.
-	//
-
-	//
-	// ### function fromMilliseconds (milliseconds)
-	// #### @milliseconds {Number} Amount of milliseconds for the new TimeSpan instance.
-	// Creates a new `TimeSpan` instance with the specified `milliseconds`.
-	//
-	exports.fromMilliseconds = function (milliseconds) {
-	  if (!isNumeric(milliseconds)) { return }
-	  return new TimeSpan(milliseconds, 0, 0, 0, 0);
-	}
-
-	//
-	// ### function fromSeconds (seconds)
-	// #### @milliseconds {Number} Amount of seconds for the new TimeSpan instance.
-	// Creates a new `TimeSpan` instance with the specified `seconds`.
-	//
-	exports.fromSeconds = function (seconds) {
-	  if (!isNumeric(seconds)) { return }
-	  return new TimeSpan(0, seconds, 0, 0, 0);
-	};
-
-	//
-	// ### function fromMinutes (milliseconds)
-	// #### @milliseconds {Number} Amount of minutes for the new TimeSpan instance.
-	// Creates a new `TimeSpan` instance with the specified `minutes`.
-	//
-	exports.fromMinutes = function (minutes) {
-	  if (!isNumeric(minutes)) { return }
-	  return new TimeSpan(0, 0, minutes, 0, 0);
-	};
-
-	//
-	// ### function fromHours (hours)
-	// #### @milliseconds {Number} Amount of hours for the new TimeSpan instance.
-	// Creates a new `TimeSpan` instance with the specified `hours`.
-	//
-	exports.fromHours = function (hours) {
-	  if (!isNumeric(hours)) { return }
-	  return new TimeSpan(0, 0, 0, hours, 0);
-	};
-
-	//
-	// ### function fromDays (days)
-	// #### @milliseconds {Number} Amount of days for the new TimeSpan instance.
-	// Creates a new `TimeSpan` instance with the specified `days`.
-	//
-	exports.fromDays = function (days) {
-	  if (!isNumeric(days)) { return }
-	  return new TimeSpan(0, 0, 0, 0, days);
-	};
-
-	//
-	// ### function parse (str)
-	// #### @str {string} Timespan string to parse.
-	// Creates a new `TimeSpan` instance from the specified
-	// string, `str`.
-	//
-	exports.parse = function (str) {
-	  var match, milliseconds;
-	  
-	  function parseMilliseconds (value) {
-	    return value ? parseFloat('0' + value) * 1000 : 0;
-	  }
-	  
-	  // If we match against a full TimeSpan: 
-	  //   [days]:[hours]:[minutes]:[seconds].[milliseconds]?
-	  if ((match = str.match(timeSpanWithDays))) {
-	    return new TimeSpan(parseMilliseconds(match[5]), match[4], match[3], match[2], match[1]);
-	  }
-	  
-	  // If we match against a partial TimeSpan:
-	  //   [hours]:[minutes]:[seconds].[milliseconds]?
-	  if ((match = str.match(timeSpanNoDays))) {
-	    return new TimeSpan(parseMilliseconds(match[4]), match[3], match[2], match[1], 0);
-	  }
-	  
-	  return null;
-	};
-
-	//
-	// List of default singular time modifiers and associated
-	// computation algoritm. Assumes in order, smallest to greatest
-	// performing carry forward additiona / subtraction for each
-	// Date-Time component.
-	//
-	var parsers = {
-	  'milliseconds': {
-	    exp: /(\d+)milli(?:second)?[s]?/i,
-	    compute: function (delta, computed) {
-	      return _compute(delta, computed, {
-	        current: 'milliseconds',
-	        next: 'seconds', 
-	        max: 1000
-	      });
-	    }
-	  },
-	  'seconds': {
-	    exp: /(\d+)second[s]?/i,
-	    compute: function (delta, computed) {
-	      return _compute(delta, computed, {
-	        current: 'seconds',
-	        next: 'minutes', 
-	        max: 60
-	      });
-	    }
-	  },
-	  'minutes': {
-	    exp: /(\d+)minute[s]?/i,
-	    compute: function (delta, computed) {
-	      return _compute(delta, computed, {
-	        current: 'minutes',
-	        next: 'hours', 
-	        max: 60
-	      });
-	    }
-	  },
-	  'hours': {
-	    exp: /(\d+)hour[s]?/i,
-	    compute: function (delta, computed) {
-	      return _compute(delta, computed, {
-	        current: 'hours',
-	        next: 'days', 
-	        max: 24
-	      });
-	    }
-	  },
-	  'days': {
-	    exp: /(\d+)day[s]?/i,
-	    compute: function (delta, computed) {
-	      var days     = monthDays(computed.months, computed.years),
-	          sign     = delta >= 0 ? 1 : -1,
-	          opsign   = delta >= 0 ? -1 : 1,
-	          clean    = 0;
-	      
-	      function update (months) {
-	        if (months < 0) { 
-	          computed.years -= 1;
-	          return 11;
-	        }
-	        else if (months > 11) { 
-	          computed.years += 1;
-	          return 0 
-	        }
-	        
-	        return months;
+	function validate(modelObj, data){
+	  var validKeys = Object.keys(modelObj);
+	  for(var key in data){
+	    if(data.hasOwnProperty(key)){
+	      if(validKeys.indexOf(key) === -1){
+	        delete data[key];
 	      }
-	      
-	      if (delta) {          
-	        while (Math.abs(delta) >= days) {
-	          computed.months += sign * 1;
-	          computed.months = update(computed.months);
-	          delta += opsign * days;
-	          days = monthDays(computed.months, computed.years);
-	        }
-	      
-	        computed.days += (opsign * delta);
-	      }
-	      
-	      if (computed.days < 0) { clean = -1 }
-	      else if (computed.days > months[computed.months]) { clean = 1 }
-	      
-	      if (clean === -1 || clean === 1) {
-	        computed.months += clean;
-	        computed.months = update(computed.months);
-	        computed.days = months[computed.months] + computed.days;
-	      }
-	            
-	      return computed;
-	    }
-	  },
-	  'months': {
-	    exp: /(\d+)month[s]?/i,
-	    compute: function (delta, computed) {
-	      var round = delta > 0 ? Math.floor : Math.ceil;
-	      if (delta) { 
-	        computed.years += round.call(null, delta / 12);
-	        computed.months += delta % 12;
-	      }
-	      
-	      if (computed.months > 11) {
-	        computed.years += Math.floor((computed.months + 1) / 12);
-	        computed.months = ((computed.months + 1) % 12) - 1;
-	      }
-	      
-	      return computed;
-	    }
-	  },
-	  'years': {
-	    exp: /(\d+)year[s]?/i,
-	    compute: function (delta, computed) {
-	      if (delta) { computed.years += delta; }
-	      return computed;
 	    }
 	  }
-	};
-
-	//
-	// Compute the list of parser names for
-	// later use.
-	//
-	var parserNames = Object.keys(parsers);
-
-	//
-	// ### function parseDate (str)
-	// #### @str {string} String to parse into a date
-	// Parses the specified liberal Date-Time string according to
-	// ISO8601 **and**:
-	//
-	// 1. `2010-04-03T12:34:15Z+12MINUTES`
-	// 2. `NOW-4HOURS`
-	//
-	// Valid modifiers for the more liberal Date-Time string(s):
-	//
-	//     YEAR, YEARS
-	//     MONTH, MONTHS
-	//     DAY, DAYS
-	//     HOUR, HOURS
-	//     MINUTE, MINUTES
-	//     SECOND, SECONDS
-	//     MILLI, MILLIS, MILLISECOND, MILLISECONDS
-	//
-	exports.parseDate = function (str) {
-	  var dateTime = Date.parse(str),
-	      iso = '^([^Z]+)',
-	      zulu = 'Z([\\+|\\-])?',
-	      diff = {},
-	      computed,
-	      modifiers,
-	      sign;
-
-	  //
-	  // If Date string supplied actually conforms 
-	  // to UTC Time (ISO8601), return a new Date.
-	  //
-	  if (!isNaN(dateTime)) {
-	    return new Date(dateTime);
-	  }
-	  
-	  //
-	  // Create the `RegExp` for the end component
-	  // of the target `str` to parse.
-	  //
-	  parserNames.forEach(function (group) {
-	    zulu += '(\\d+[a-zA-Z]+)?';
-	  });
-	  
-	  if (/^NOW/i.test(str)) {
-	    //
-	    // If the target `str` is a liberal `NOW-*`,
-	    // then set the base `dateTime` appropriately.
-	    //
-	    dateTime = Date.now();
-	    zulu = zulu.replace(/Z/, 'NOW');
-	  }
-	  else if (/^\-/.test(str) || /^\+/.test(str)) {
-	    dateTime = Date.now();
-	    zulu = zulu.replace(/Z/, '');
-	  }
-	  else {
-	    //
-	    // Parse the `ISO8601` component, and the end
-	    // component from the target `str`.
-	    //
-	    dateTime = str.match(new RegExp(iso, 'i'));
-	    dateTime = Date.parse(dateTime[1]);
-	  }
-	  
-	  //
-	  // If there was no match on either part then 
-	  // it must be a bad value.
-	  //
-	  if (!dateTime || !(modifiers = str.match(new RegExp(zulu, 'i')))) {
-	    return null;
-	  }
-	    
-	  //
-	  // Create a new `Date` object from the `ISO8601`
-	  // component of the target `str`.
-	  //
-	  dateTime = new Date(dateTime);
-	  sign = modifiers[1] === '+' ? 1 : -1;
-	  
-	  //
-	  // Create an Object-literal for consistently accessing
-	  // the various components of the computed Date.
-	  //
-	  var computed = {
-	    milliseconds: dateTime.getMilliseconds(),
-	    seconds: dateTime.getSeconds(),
-	    minutes: dateTime.getMinutes(),
-	    hours: dateTime.getHours(),
-	    days: dateTime.getDate(),
-	    months: dateTime.getMonth(),
-	    years: dateTime.getFullYear()
-	  };
-	  
-	  //
-	  // Parse the individual component spans (months, years, etc)
-	  // from the modifier strings that we parsed from the end 
-	  // of the target `str`.
-	  //
-	  modifiers.slice(2).filter(Boolean).forEach(function (modifier) {
-	    parserNames.forEach(function (name) {
-	      var match;
-	      if (!(match = modifier.match(parsers[name].exp))) {
-	        return;
-	      }
-	      
-	      diff[name] = sign * parseInt(match[1], 10);
-	    })
-	  });
-	  
-	  //
-	  // Compute the total `diff` by iteratively computing 
-	  // the partial components from smallest to largest.
-	  //
-	  parserNames.forEach(function (name) {    
-	    computed = parsers[name].compute(diff[name], computed);
-	  });
-	  
-	  return new Date(
-	    computed.years,
-	    computed.months,
-	    computed.days,
-	    computed.hours,
-	    computed.minutes,
-	    computed.seconds,
-	    computed.milliseconds
-	  );
-	};
-
-	//
-	// ### function fromDates (start, end, abs)
-	// #### @start {Date} Start date of the `TimeSpan` instance to return
-	// #### @end {Date} End date of the `TimeSpan` instance to return
-	// #### @abs {boolean} Value indicating to return an absolute value
-	// Returns a new `TimeSpan` instance representing the difference between
-	// the `start` and `end` Dates.
-	//
-	exports.fromDates = function (start, end, abs) {
-	  if (typeof start === 'string') {
-	    start = exports.parseDate(start);
-	  }
-	  
-	  if (typeof end === 'string') {
-	    end = exports.parseDate(end);
-	  }
-	  
-	  if (!(start instanceof Date && end instanceof Date)) {
-	    return null;
-	  }
-	  
-	  var differenceMsecs = end.valueOf() - start.valueOf();
-	  if (abs) {
-	    differenceMsecs = Math.abs(differenceMsecs);
-	  }
-
-	  return new TimeSpan(differenceMsecs, 0, 0, 0, 0);
-	};
-
-	//
-	// ## Module Helpers
-	// Module-level helpers for various utilities such as:
-	// instanceOf, parsability, and cloning.
-	//
-
-	//
-	// ### function test (str)
-	// #### @str {string} String value to test if it is a TimeSpan
-	// Returns a value indicating if the specified string, `str`,
-	// is a parsable `TimeSpan` value.
-	//
-	exports.test = function (str) {
-	  return timeSpanWithDays.test(str) || timeSpanNoDays.test(str);
-	};
-
-	//
-	// ### function instanceOf (timeSpan)
-	// #### @timeSpan {Object} Object to check TimeSpan quality.
-	// Returns a value indicating if the specified `timeSpan` is
-	// in fact a `TimeSpan` instance.
-	//
-	exports.instanceOf = function (timeSpan) {
-	  return timeSpan instanceof TimeSpan;
-	};
-
-	//
-	// ### function clone (timeSpan)
-	// #### @timeSpan {TimeSpan} TimeSpan object to clone.
-	// Returns a new `TimeSpan` instance with the same value
-	// as the `timeSpan` object supplied.
-	//
-	exports.clone = function (timeSpan) {
-	  if (!(timeSpan instanceof TimeSpan)) { return }
-	  return exports.fromMilliseconds(timeSpan.totalMilliseconds());
-	};
-
-	//
-	// ## Addition
-	// Methods for adding `TimeSpan` instances, 
-	// milliseconds, seconds, hours, and days to other
-	// `TimeSpan` instances.
-	//
-
-	//
-	// ### function add (timeSpan)
-	// #### @timeSpan {TimeSpan} TimeSpan to add to this instance
-	// Adds the specified `timeSpan` to this instance.
-	//
-	TimeSpan.prototype.add = function (timeSpan) {
-	  if (!(timeSpan instanceof TimeSpan)) { return }
-	  this.msecs += timeSpan.totalMilliseconds();
-	};
-
-	//
-	// ### function addMilliseconds (milliseconds)
-	// #### @milliseconds {Number} Number of milliseconds to add.
-	// Adds the specified `milliseconds` to this instance.
-	//
-	TimeSpan.prototype.addMilliseconds = function (milliseconds) {
-	  if (!isNumeric(milliseconds)) { return }
-	  this.msecs += milliseconds;
-	};
-
-	//
-	// ### function addSeconds (seconds)
-	// #### @seconds {Number} Number of seconds to add.
-	// Adds the specified `seconds` to this instance.
-	//
-	TimeSpan.prototype.addSeconds = function (seconds) {
-	  if (!isNumeric(seconds)) { return }
-	  
-	  this.msecs += (seconds * msecPerSecond);
-	};
-
-	//
-	// ### function addMinutes (minutes)
-	// #### @minutes {Number} Number of minutes to add.
-	// Adds the specified `minutes` to this instance.
-	//
-	TimeSpan.prototype.addMinutes = function (minutes) {
-	  if (!isNumeric(minutes)) { return }
-	  this.msecs += (minutes * msecPerMinute);
-	};
-
-	//
-	// ### function addHours (hours)
-	// #### @hours {Number} Number of hours to add.
-	// Adds the specified `hours` to this instance.
-	//
-	TimeSpan.prototype.addHours = function (hours) {
-	  if (!isNumeric(hours)) { return }
-	  this.msecs += (hours * msecPerHour);
-	};
-
-	//
-	// ### function addDays (days)
-	// #### @days {Number} Number of days to add.
-	// Adds the specified `days` to this instance.
-	//
-	TimeSpan.prototype.addDays = function (days) {
-	  if (!isNumeric(days)) { return }
-	  this.msecs += (days * msecPerDay);
-	};
-
-	//
-	// ## Subtraction
-	// Methods for subtracting `TimeSpan` instances, 
-	// milliseconds, seconds, hours, and days from other
-	// `TimeSpan` instances.
-	//
-
-	//
-	// ### function subtract (timeSpan)
-	// #### @timeSpan {TimeSpan} TimeSpan to subtract from this instance.
-	// Subtracts the specified `timeSpan` from this instance.
-	//
-	TimeSpan.prototype.subtract = function (timeSpan) {
-	  if (!(timeSpan instanceof TimeSpan)) { return }
-	  this.msecs -= timeSpan.totalMilliseconds();
-	};
-
-	//
-	// ### function subtractMilliseconds (milliseconds)
-	// #### @milliseconds {Number} Number of milliseconds to subtract.
-	// Subtracts the specified `milliseconds` from this instance.
-	//
-	TimeSpan.prototype.subtractMilliseconds = function (milliseconds) {
-	  if (!isNumeric(milliseconds)) { return }
-	  this.msecs -= milliseconds;
-	};
-
-	//
-	// ### function subtractSeconds (seconds)
-	// #### @seconds {Number} Number of seconds to subtract.
-	// Subtracts the specified `seconds` from this instance.
-	//
-	TimeSpan.prototype.subtractSeconds = function (seconds) {
-	  if (!isNumeric(seconds)) { return }
-	  this.msecs -= (seconds * msecPerSecond);
-	};
-
-	//
-	// ### function subtractMinutes (minutes)
-	// #### @minutes {Number} Number of minutes to subtract.
-	// Subtracts the specified `minutes` from this instance.
-	//
-	TimeSpan.prototype.subtractMinutes = function (minutes) {
-	  if (!isNumeric(minutes)) { return }
-	  this.msecs -= (minutes * msecPerMinute);
-	};
-
-	//
-	// ### function subtractHours (hours)
-	// #### @hours {Number} Number of hours to subtract.
-	// Subtracts the specified `hours` from this instance.
-	//
-	TimeSpan.prototype.subtractHours = function (hours) {
-	  if (!isNumeric(hours)) { return }
-	  this.msecs -= (hours * msecPerHour);
-	};
-
-	//
-	// ### function subtractDays (days)
-	// #### @days {Number} Number of days to subtract.
-	// Subtracts the specified `days` from this instance.
-	//
-	TimeSpan.prototype.subtractDays = function (days) {
-	  if (!isNumeric(days)) { return }
-	  this.msecs -= (days * msecPerDay);
-	};
-
-	//
-	// ## Getters
-	// Methods for retrieving components of a `TimeSpan`
-	// instance: milliseconds, seconds, minutes, hours, and days.
-	//
-
-	//
-	// ### function totalMilliseconds (roundDown)
-	// #### @roundDown {boolean} Value indicating if the value should be rounded down.
-	// Returns the total number of milliseconds for this instance, rounding down
-	// to the nearest integer if `roundDown` is set.
-	//
-	TimeSpan.prototype.totalMilliseconds = function (roundDown) {
-	  var result = this.msecs;
-	  if (roundDown === true) {
-	    result = Math.floor(result);
-	  }
-	  
-	  return result;
-	};
-
-	//
-	// ### function totalSeconds (roundDown)
-	// #### @roundDown {boolean} Value indicating if the value should be rounded down.
-	// Returns the total number of seconds for this instance, rounding down
-	// to the nearest integer if `roundDown` is set.
-	//
-	TimeSpan.prototype.totalSeconds = function (roundDown) {
-	  var result = this.msecs / msecPerSecond;
-	  if (roundDown === true) {
-	    result = Math.floor(result);
-	  }
-	  
-	  return result;
-	};
-
-	//
-	// ### function totalMinutes (roundDown)
-	// #### @roundDown {boolean} Value indicating if the value should be rounded down.
-	// Returns the total number of minutes for this instance, rounding down
-	// to the nearest integer if `roundDown` is set.
-	//
-	TimeSpan.prototype.totalMinutes = function (roundDown) {
-	  var result = this.msecs / msecPerMinute;
-	  if (roundDown === true) {
-	    result = Math.floor(result);
-	  }
-	  
-	  return result;
-	};
-
-	//
-	// ### function totalHours (roundDown)
-	// #### @roundDown {boolean} Value indicating if the value should be rounded down.
-	// Returns the total number of hours for this instance, rounding down
-	// to the nearest integer if `roundDown` is set.
-	//
-	TimeSpan.prototype.totalHours = function (roundDown) {
-	  var result = this.msecs / msecPerHour;
-	  if (roundDown === true) {
-	    result = Math.floor(result);
-	  }
-	  
-	  return result;
-	};
-
-	//
-	// ### function totalDays (roundDown)
-	// #### @roundDown {boolean} Value indicating if the value should be rounded down.
-	// Returns the total number of days for this instance, rounding down
-	// to the nearest integer if `roundDown` is set.
-	//
-	TimeSpan.prototype.totalDays = function (roundDown) {
-	  var result = this.msecs / msecPerDay;
-	  if (roundDown === true) {
-	    result = Math.floor(result);
-	  }
-	  
-	  return result;
-	};
-
-	//
-	// ### @milliseconds
-	// Returns the length of this `TimeSpan` instance in milliseconds.
-	//
-	TimeSpan.prototype.__defineGetter__('milliseconds', function () {
-	  return this.msecs % 1000;
-	});
-
-	//
-	// ### @seconds
-	// Returns the length of this `TimeSpan` instance in seconds.
-	//
-	TimeSpan.prototype.__defineGetter__('seconds', function () {
-	  return Math.floor(this.msecs / msecPerSecond) % 60;
-	});
-
-	//
-	// ### @minutes
-	// Returns the length of this `TimeSpan` instance in minutes.
-	//
-	TimeSpan.prototype.__defineGetter__('minutes', function () {
-	  return Math.floor(this.msecs / msecPerMinute) % 60;
-	});
-
-	//
-	// ### @hours
-	// Returns the length of this `TimeSpan` instance in hours.
-	//
-	TimeSpan.prototype.__defineGetter__('hours', function () {
-	  return Math.floor(this.msecs / msecPerHour) % 24;
-	});
-
-	//
-	// ### @days
-	// Returns the length of this `TimeSpan` instance in days.
-	//
-	TimeSpan.prototype.__defineGetter__('days', function () {
-	  return Math.floor(this.msecs / msecPerDay);
-	});
-
-	//
-	// ## Instance Helpers
-	// Various help methods for performing utilities
-	// such as equality and serialization
-	//
-
-	//
-	// ### function equals (timeSpan)
-	// #### @timeSpan {TimeSpan} TimeSpan instance to assert equal
-	// Returns a value indicating if the specified `timeSpan` is equal
-	// in milliseconds to this instance.
-	//
-	TimeSpan.prototype.equals = function (timeSpan) {
-	  if (!(timeSpan instanceof TimeSpan)) { return }
-	  return this.msecs === timeSpan.totalMilliseconds();
-	};
-
-	//
-	// ### function toString () 
-	// Returns a string representation of this `TimeSpan`
-	// instance according to current `format`.
-	//
-	TimeSpan.prototype.toString = function () {
-	  if (!this.format) { return this._format() }
-	  return this.format(this);
-	};
-
-	//
-	// ### @private function _format () 
-	// Returns the default string representation of this instance.
-	//
-	TimeSpan.prototype._format = function () {
-	  return [
-	    this.days,
-	    this.hours,
-	    this.minutes,
-	    this.seconds + '.' + this.milliseconds
-	  ].join(':')
-	};
-
-	//
-	// ### @private function isNumeric (input) 
-	// #### @input {Number} Value to check numeric quality of.
-	// Returns a value indicating the numeric quality of the 
-	// specified `input`.
-	//
-	function isNumeric (input) {
-	  return input && !isNaN(parseFloat(input)) && isFinite(input);
-	};
-
-	//
-	// ### @private function _compute (delta, date, computed, options)
-	// #### @delta {Number} Channge in this component of the date
-	// #### @computed {Object} Currently computed date.
-	// #### @options {Object} Options for the computation
-	// Performs carry forward addition or subtraction for the
-	// `options.current` component of the `computed` date, carrying 
-	// it forward to `options.next` depending on the maximum value,
-	// `options.max`.
-	//
-	function _compute (delta, computed, options) {
-	  var current = options.current,
-	      next    = options.next,
-	      max     = options.max,
-	      round  = delta > 0 ? Math.floor : Math.ceil;
-	      
-	  if (delta) {
-	    computed[next] += round.call(null, delta / max);
-	    computed[current] += delta % max;
-	  }
-	  
-	  if (Math.abs(computed[current]) >= max) {
-	    computed[next] += round.call(null, computed[current] / max)
-	    computed[current] = computed[current] % max;
-	  }
-
-	  return computed;
-	}
-
-
-	//
-	// ### @private monthDays (month, year)
-	// #### @month {Number} Month to get days for.
-	// #### @year {Number} Year of the month to get days for.
-	// Returns the number of days in the specified `month` observing
-	// leap years.
-	//
-	var months = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-	function monthDays (month, year) {    
-	  if (((year % 100 !== 0 && year % 4 === 0) 
-	    || year % 400 === 0) && month === 1) {
-	    return 29;
-	  }
-	  
-	  return months[month];
+	  return data;
 	}
 
 /***/ },
 /* 12 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("json-stringify-safe");
+	var map = {
+		"./connection": 2,
+		"./connection.js": 2,
+		"./migration": 13,
+		"./migration.js": 13,
+		"./model": 5,
+		"./model.js": 5,
+		"./orm": 8,
+		"./orm.js": 8,
+		"./query": 4,
+		"./query.js": 4,
+		"./validation": 11,
+		"./validation.js": 11
+	};
+	function webpackContext(req) {
+		return __webpack_require__(webpackContextResolve(req));
+	};
+	function webpackContextResolve(req) {
+		return map[req] || (function() { throw new Error("Cannot find module '" + req + "'.") }());
+	};
+	webpackContext.keys = function webpackContextKeys() {
+		return Object.keys(map);
+	};
+	webpackContext.resolve = webpackContextResolve;
+	module.exports = webpackContext;
+	webpackContext.id = 12;
+
 
 /***/ },
 /* 13 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("auth0@2.1.0");
+	// adapated from https://github.com/tj/node-migrate/blob/master/bin/migrate
+	// this was originally CLI, but I want to make this API accessible programatically
+
+	var migrate = __webpack_require__(14);
+	var join = __webpack_require__(6).join;
+	var fs = __webpack_require__(7);
+	var folderName = 'redshift_migrations';
+
+	var template = [
+	    '\'use strict\''
+	  , ''
+	  , 'exports.up = function(next) {'
+	  , '  next();'
+	  , '};'
+	  , ''
+	  , 'exports.down = function(next) {'
+	  , '  next();'
+	  , '};'
+	  , ''
+	].join('\n');
+
+
+
+	function create(name) {
+	  try {
+	    fs.mkdirSync(folderName, 0774);
+	  } catch (err) {
+	    // ignore
+	  }
+	  var curr = Date.now();
+	  name = curr + '-' + name;
+	  var path = join(folderName, name + '.js');
+	  console.log('create', join(process.cwd(), path));
+	  fs.writeFileSync(path, template);
+	}
+
+	module.exports.create = create;
+
+	function up(migrationName){
+	  performMigration('up', migrationName);
+	}
+
+	module.exports.up = up;
+	/**
+	 * down [name]
+	 */
+
+	function down(migrationName){
+	  performMigration('down', migrationName);
+	}
+
+	module.exports.down = down;
+
+	function performMigration(direction, migrationName) {
+	  var state = join(folderName, '.migrate');
+	  var set = migrate.load(state, folderName);
+
+	  set.on('migration', function(migration, direction){
+	    console.log(direction, migration.title);
+	  });
+
+	  var migrationPath = migrationName
+	    ? join(folderName, migrationName)
+	    : migrationName;
+
+	  set[direction](migrationName, function (err) {
+	    if (err) {
+	      console.log('error', err);
+	      process.exit(1);
+	    }
+
+	    console.log('migration', 'complete');
+	    process.exit(0);
+	  });
+	}
 
 /***/ },
 /* 14 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("async");
+	
+	module.exports = __webpack_require__(15);
 
 /***/ },
 /* 15 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("moment");
+	
+	/*!
+	 * migrate
+	 * Copyright(c) 2011 TJ Holowaychuk <tj@vision-media.ca>
+	 * MIT Licensed
+	 */
+
+	/**
+	 * Module dependencies.
+	 */
+
+	var Set = __webpack_require__(16)
+	  , path = __webpack_require__(6)
+	  , fs = __webpack_require__(7);
+
+	/**
+	 * Expose the migrate function.
+	 */
+
+	exports = module.exports = migrate;
+
+	function migrate(title, up, down) {
+	  // migration
+	  if ('string' == typeof title && up && down) {
+	    migrate.set.addMigration(title, up, down);
+	  // specify migration file
+	  } else if ('string' == typeof title) {
+	    migrate.set = new Set(title);
+	  // no migration path
+	  } else if (!migrate.set) {
+	    throw new Error('must invoke migrate(path) before running migrations');
+	  // run migrations
+	  } else {
+	    return migrate.set;
+	  }
+	}
+
+	exports.load = function (stateFile, migrationsDirectory) {
+
+	  var set = new Set(stateFile);
+	  var dir = path.resolve(migrationsDirectory);
+
+	  fs.readdirSync(dir).filter(function(file){
+	    return file.match(/^\d+.*\.js$/);
+	  }).sort().forEach(function (file) {
+	    var mod = __webpack_require__(19)(path.join(dir, file));
+	    set.addMigration(file, mod.up, mod.down);
+	  });
+
+	  return set;
+	};
+
 
 /***/ },
 /* 16 */
-/***/ function(module, exports) {
+/***/ function(module, exports, __webpack_require__) {
 
-	module.exports = require("useragent");
+	
+	/*!
+	 * migrate - Set
+	 * Copyright (c) 2010 TJ Holowaychuk <tj@vision-media.ca>
+	 * MIT Licensed
+	 */
+
+	/**
+	 * Module dependencies.
+	 */
+
+	var EventEmitter = __webpack_require__(17).EventEmitter
+	  , Migration = __webpack_require__(18)
+	  , fs = __webpack_require__(7);
+
+	/**
+	 * Expose `Set`.
+	 */
+
+	module.exports = Set;
+
+	/**
+	 * Initialize a new migration `Set` with the given `path`
+	 * which is used to store data between migrations.
+	 *
+	 * @param {String} path
+	 * @api private
+	 */
+
+	function Set(path) {
+	  this.migrations = [];
+	  this.path = path;
+	  this.pos = 0;
+	};
+
+	/**
+	 * Inherit from `EventEmitter.prototype`.
+	 */
+
+	Set.prototype.__proto__ = EventEmitter.prototype;
+
+	/**
+	 * Add a migration.
+	 *
+	 * @param {String} title
+	 * @param {Function} up
+	 * @param {Function} down
+	 * @api public
+	 */
+
+	Set.prototype.addMigration = function(title, up, down){
+	  this.migrations.push(new Migration(title, up, down));
+	};
+
+	/**
+	 * Save the migration data.
+	 *
+	 * @api public
+	 */
+
+	Set.prototype.save = function(fn){
+	  var self = this
+	    , json = JSON.stringify(this);
+	  fs.writeFile(this.path, json, function(err){
+	    if (err) return fn(err);
+
+	    self.emit('save');
+	    fn(null);
+	  });
+	};
+
+	/**
+	 * Load the migration data and call `fn(err, obj)`.
+	 *
+	 * @param {Function} fn
+	 * @return {Type}
+	 * @api public
+	 */
+
+	Set.prototype.load = function(fn){
+	  this.emit('load');
+	  fs.readFile(this.path, 'utf8', function(err, json){
+	    if (err) return fn(err);
+	    try {
+	      fn(null, JSON.parse(json));
+	    } catch (err) {
+	      fn(err);
+	    }
+	  });
+	};
+
+	/**
+	 * Run down migrations and call `fn(err)`.
+	 *
+	 * @param {Function} fn
+	 * @api public
+	 */
+
+	Set.prototype.down = function(migrationName, fn){
+	  this.migrate('down', migrationName, fn);
+	};
+
+	/**
+	 * Run up migrations and call `fn(err)`.
+	 *
+	 * @param {Function} fn
+	 * @api public
+	 */
+
+	Set.prototype.up = function(migrationName, fn){
+	  this.migrate('up', migrationName, fn);
+	};
+
+	/**
+	 * Migrate in the given `direction`, calling `fn(err)`.
+	 *
+	 * @param {String} direction
+	 * @param {Function} fn
+	 * @api public
+	 */
+
+	Set.prototype.migrate = function(direction, migrationName, fn){
+	  if (typeof migrationName === 'function') {
+	    fn = migrationName;
+	    migrationName = null;
+	  }
+	  var self = this;
+	  this.load(function(err, obj){
+	    if (err) {
+	      if ('ENOENT' != err.code) return fn(err);
+	    } else {
+	      self.pos = obj.pos;
+	    }
+	    self._migrate(direction, migrationName, fn);
+	  });
+	};
+
+	/**
+	 * Get index of given migration in list of migrations
+	 *
+	 * @api private
+	 */
+
+	 function positionOfMigration(migrations, filename) {
+	   for(var i=0; i < migrations.length; ++i) {
+	     if (migrations[i].title == filename) return i;
+	   }
+	   return -1;
+	 }
+
+	/**
+	 * Perform migration.
+	 *
+	 * @api private
+	 */
+
+	Set.prototype._migrate = function(direction, migrationName, fn){
+	  var self = this
+	    , migrations
+	    , migrationPos;
+
+	  if (!migrationName) {
+	    migrationPos = direction == 'up' ? this.migrations.length : 0;
+	  } else if ((migrationPos = positionOfMigration(this.migrations, migrationName)) == -1) {
+	    return fn(new Error("Could not find migration: " + migrationName));
+	  }
+
+	  switch (direction) {
+	    case 'up':
+	      migrations = this.migrations.slice(this.pos, migrationPos+1);
+	      break;
+	    case 'down':
+	      migrations = this.migrations.slice(migrationPos, this.pos).reverse();
+	      break;
+	  }
+
+	  function next(migration) {
+	    if (!migration) return fn(null);
+
+	    self.emit('migration', migration, direction);
+	    migration[direction](function(err){
+	      if (err) return fn(err);
+
+	      self.pos += (direction === 'up' ? 1 : -1);
+	      self.save(function (err) {
+	        if (err) return fn(err);
+
+	        next(migrations.shift())
+	      });
+	    });
+	  }
+
+	  next(migrations.shift());
+	};
+
 
 /***/ },
 /* 17 */
 /***/ function(module, exports) {
 
-	module.exports = require("express");
+	module.exports = require("events");
 
 /***/ },
 /* 18 */
+/***/ function(module, exports) {
+
+	
+	/*!
+	 * migrate - Migration
+	 * Copyright (c) 2010 TJ Holowaychuk <tj@vision-media.ca>
+	 * MIT Licensed
+	 */
+
+	/**
+	 * Expose `Migration`.
+	 */
+
+	module.exports = Migration;
+
+	function Migration(title, up, down) {
+	  this.title = title;
+	  this.up = up;
+	  this.down = down;
+	}
+
+/***/ },
+/* 19 */
+/***/ function(module, exports, __webpack_require__) {
+
+	var map = {
+		"./migrate": 15,
+		"./migrate.js": 15,
+		"./migration": 18,
+		"./migration.js": 18,
+		"./set": 16,
+		"./set.js": 16
+	};
+	function webpackContext(req) {
+		return __webpack_require__(webpackContextResolve(req));
+	};
+	function webpackContextResolve(req) {
+		return map[req] || (function() { throw new Error("Cannot find module '" + req + "'.") }());
+	};
+	webpackContext.keys = function webpackContextKeys() {
+		return Object.keys(map);
+	};
+	webpackContext.resolve = webpackContextResolve;
+	module.exports = webpackContext;
+	webpackContext.id = 19;
+
+
+/***/ },
+/* 20 */
+/***/ function(module, exports) {
+
+	module.exports = require("auth0@2.1.0");
+
+/***/ },
+/* 21 */
+/***/ function(module, exports) {
+
+	module.exports = require("async");
+
+/***/ },
+/* 22 */
+/***/ function(module, exports) {
+
+	module.exports = require("moment");
+
+/***/ },
+/* 23 */
+/***/ function(module, exports) {
+
+	module.exports = require("useragent");
+
+/***/ },
+/* 24 */
+/***/ function(module, exports) {
+
+	module.exports = require("express");
+
+/***/ },
+/* 25 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.fromConnect = exports.fromExpress = fromConnect;
@@ -2120,7 +2387,7 @@ module.exports =
 
 
 	    function readNotAvailable(path, options, cb) {
-	        var Boom = __webpack_require__(19);
+	        var Boom = __webpack_require__(26);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2131,8 +2398,8 @@ module.exports =
 	    }
 
 	    function readFromPath(path, options, cb) {
-	        var Boom = __webpack_require__(19);
-	        var Request = __webpack_require__(9);
+	        var Boom = __webpack_require__(26);
+	        var Request = __webpack_require__(27);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2155,7 +2422,7 @@ module.exports =
 	    }
 
 	    function writeNotAvailable(path, data, options, cb) {
-	        var Boom = __webpack_require__(19);
+	        var Boom = __webpack_require__(26);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2166,8 +2433,8 @@ module.exports =
 	    }
 
 	    function writeToPath(path, data, options, cb) {
-	        var Boom = __webpack_require__(19);
-	        var Request = __webpack_require__(9);
+	        var Boom = __webpack_require__(26);
+	        var Request = __webpack_require__(27);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2191,23 +2458,29 @@ module.exports =
 
 
 /***/ },
-/* 19 */
+/* 26 */
 /***/ function(module, exports) {
 
 	module.exports = require("boom");
 
 /***/ },
-/* 20 */
+/* 27 */
+/***/ function(module, exports) {
+
+	module.exports = require("request");
+
+/***/ },
+/* 28 */
 /***/ function(module, exports) {
 
 	module.exports = require("superagent");
 
 /***/ },
-/* 21 */
+/* 29 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(setImmediate) {const LRU = __webpack_require__(24);
-	const _ = __webpack_require__(25);
+	/* WEBPACK VAR INJECTION */(function(setImmediate) {const LRU = __webpack_require__(32);
+	const _ = __webpack_require__(33);
 	const lru_params =  [ 'max', 'maxAge', 'length', 'dispose', 'stale' ];
 
 	module.exports = function (options) {
@@ -2281,13 +2554,13 @@ module.exports =
 
 	  return result;
 	};
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(22).setImmediate))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(30).setImmediate))
 
 /***/ },
-/* 22 */
+/* 30 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(setImmediate, clearImmediate) {var nextTick = __webpack_require__(23).nextTick;
+	/* WEBPACK VAR INJECTION */(function(setImmediate, clearImmediate) {var nextTick = __webpack_require__(31).nextTick;
 	var apply = Function.prototype.apply;
 	var slice = Array.prototype.slice;
 	var immediateIds = {};
@@ -2363,10 +2636,10 @@ module.exports =
 	exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate : function(id) {
 	  delete immediateIds[id];
 	};
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(22).setImmediate, __webpack_require__(22).clearImmediate))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(30).setImmediate, __webpack_require__(30).clearImmediate))
 
 /***/ },
-/* 23 */
+/* 31 */
 /***/ function(module, exports) {
 
 	// shim for using process in browser
@@ -2463,13 +2736,13 @@ module.exports =
 
 
 /***/ },
-/* 24 */
+/* 32 */
 /***/ function(module, exports) {
 
 	module.exports = require("lru-cache");
 
 /***/ },
-/* 25 */
+/* 33 */
 /***/ function(module, exports) {
 
 	module.exports = require("lodash");

@@ -1,4 +1,4 @@
-# Auth0 - Logs to Loggly
+# Auth0 - Users to Redshift
 
 [![Auth0 Extensions](http://cdn.auth0.com/extensions/assets/badge.svg)](https://sandbox.it.auth0.com/api/run/auth0-extensions/extensions-badge?webtask_no_cache=1)
 

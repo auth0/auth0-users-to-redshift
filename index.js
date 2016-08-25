@@ -1,4 +1,5 @@
-const Loggly    = require('loggly');
+// const Loggly    = require('loggly');
+var Redshift    = require('node-redshift');
 const Auth0     = require('auth0');
 const async     = require('async');
 const moment    = require('moment');
@@ -11,7 +12,7 @@ const memoizer  = require('lru-memoizer');
 
 function lastLogCheckpoint (req, res) {
   let ctx               = req.webtaskContext;
-  let required_settings = ['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET', 'LOGGLY_CUSTOMER_TOKEN'];
+  let required_settings = ['AUTH0_DOMAIN', 'AUTH0_CLIENT_ID', 'AUTH0_CLIENT_SECRET'];
   let missing_settings  = required_settings.filter((setting) => !ctx.data[setting]);
 
   if (missing_settings.length) {
@@ -29,11 +30,16 @@ function lastLogCheckpoint (req, res) {
        token:  req.access_token
     });
 
-    const loggly = Loggly.createClient({
-      token:     ctx.data.LOGGLY_CUSTOMER_TOKEN,
-      subdomain: ctx.data.LOGGLY_SUBDOMAIN || '-',
-      tags:      ['auth0']
-    });
+    var credentials = {
+      user:     ctx.data.AWS_REDSHIFT_USER,
+      database: ctx.data.AWS_REDSHIFT_DATABASE,
+      password: ctx.data.AWS_REDSHIFT_PASSWORD,
+      port:     ctx.data.AWS_REDSHIFT_PORT,
+      host:     ctx.data.AWS_REDSHIFT_HOST
+    };
+
+    var redshiftClient = new Redshift(client);
+    var model = Redshift.import('./model');
 
     // Start the process.
     async.waterfall([
@@ -90,15 +96,22 @@ function lastLogCheckpoint (req, res) {
       (context, callback) => {
         console.log(`Sending ${context.logs.length}`);
 
-        // loggly
-        loggly.log(context.logs, (err) => {
+        async.eachLimit(context.logs, 5, (log, cb) => {
+          model.create({
+            date:        log.date, 
+            type:        log.type,
+            connection:  log.connection,
+            client_id:   log.client_id,
+            client_name: log.client_name,
+            user_id:     log.user_id,
+            user_name:   log.user_name
+          }, cb);
+        }, (err) => {
           if (err) {
-            console.log('Error sending logs to Sumologic', err);
             return callback(err);
           }
 
           console.log('Upload complete.');
-
           return callback(null, context);
         });
       }
