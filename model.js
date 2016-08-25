@@ -1,7 +1,7 @@
 'use strict';
 
 var model = {
-  'tableName': 'auth0-logs',
+  'tableName': 'auth0Logs',
   'tableProperties': {
     'date': {
       'type': 'key'

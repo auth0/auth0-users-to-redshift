@@ -1,5 +1,8 @@
 // const Loggly    = require('loggly');
-var Redshift    = require('node-redshift');
+// var Redshift    = require('node-redshift');
+const bricks = require("sql-bricks");
+var insert = bricks.insert;
+const Pg = require('pg');
 const Auth0     = require('auth0');
 const async     = require('async');
 const moment    = require('moment');
@@ -37,9 +40,11 @@ function lastLogCheckpoint (req, res) {
       port:     ctx.data.AWS_REDSHIFT_PORT,
       host:     ctx.data.AWS_REDSHIFT_HOST
     };
-
-    var redshiftClient = new Redshift(client);
-    var model = Redshift.import('./model');
+    
+    //this initializes a connection pool 
+    //it will keep idle connections open for a 30 seconds 
+    //and set a limit of maximum 10 idle clients 
+    var pool = new pg.Pool(credentials);
 
     // Start the process.
     async.waterfall([
@@ -96,23 +101,38 @@ function lastLogCheckpoint (req, res) {
       (context, callback) => {
         console.log(`Sending ${context.logs.length}`);
 
-        async.eachLimit(context.logs, 5, (log, cb) => {
-          model.create({
-            date:        log.date, 
-            type:        log.type,
-            connection:  log.connection,
-            client_id:   log.client_id,
-            client_name: log.client_name,
-            user_id:     log.user_id,
-            user_name:   log.user_name
-          }, cb);
-        }, (err) => {
-          if (err) {
+        pool.connect(function(err, client, done) {
+          if(err) {
             return callback(err);
           }
+          
+          async.eachLimit(context.logs, 5, (log, cb) => {
+            let query = insert('auth0logstest', {
+              date:        log.date, 
+              type:        log.type,
+              connection:  log.connection,
+              client_id:   log.client_id,
+              client_name: log.client_name,
+              user_id:     log.user_id,
+              user_name:   log.user_name
+            });
 
-          console.log('Upload complete.');
-          return callback(null, context);
+            client.query(query, function(err, result) {          
+              if (err) {
+                return cb(err);
+              }
+              cb(null); 
+            });            
+          }, (err) => {
+            if (err) {
+              return callback(err);
+            }
+
+            done();
+
+            console.log('Upload complete.');
+            return callback(null, context);
+          });
         });
       }
     ], function (err, context) {

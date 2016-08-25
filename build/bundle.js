@@ -48,16 +48,19 @@ module.exports =
 	'use strict';
 
 	// const Loggly    = require('loggly');
-	var Redshift = __webpack_require__(1);
-	var Auth0 = __webpack_require__(20);
-	var async = __webpack_require__(21);
-	var moment = __webpack_require__(22);
-	var useragent = __webpack_require__(23);
-	var express = __webpack_require__(24);
-	var Webtask = __webpack_require__(25);
+	// var Redshift    = require('node-redshift');
+	var bricks = __webpack_require__(1);
+	var insert = bricks.insert;
+	var Pg = __webpack_require__(3);
+	var Auth0 = __webpack_require__(4);
+	var async = __webpack_require__(5);
+	var moment = __webpack_require__(6);
+	var useragent = __webpack_require__(7);
+	var express = __webpack_require__(8);
+	var Webtask = __webpack_require__(9);
 	var app = express();
-	var Request = __webpack_require__(28);
-	var memoizer = __webpack_require__(29);
+	var Request = __webpack_require__(12);
+	var memoizer = __webpack_require__(13);
 
 	function lastLogCheckpoint(req, res) {
 	  var ctx = req.webtaskContext;
@@ -89,8 +92,10 @@ module.exports =
 	      host: ctx.data.AWS_REDSHIFT_HOST
 	    };
 
-	    var redshiftClient = new Redshift(client);
-	    var model = Redshift.import('./model');
+	    //this initializes a connection pool
+	    //it will keep idle connections open for a 30 seconds
+	    //and set a limit of maximum 10 idle clients
+	    var pool = new pg.Pool(credentials);
 
 	    // Start the process.
 	    async.waterfall([function (callback) {
@@ -145,23 +150,38 @@ module.exports =
 	    }, function (context, callback) {
 	      console.log('Sending ' + context.logs.length);
 
-	      async.eachLimit(context.logs, 5, function (log, cb) {
-	        model.create({
-	          date: log.date,
-	          type: log.type,
-	          connection: log.connection,
-	          client_id: log.client_id,
-	          client_name: log.client_name,
-	          user_id: log.user_id,
-	          user_name: log.user_name
-	        }, cb);
-	      }, function (err) {
+	      pool.connect(function (err, client, done) {
 	        if (err) {
 	          return callback(err);
 	        }
 
-	        console.log('Upload complete.');
-	        return callback(null, context);
+	        async.eachLimit(context.logs, 5, function (log, cb) {
+	          var query = insert('auth0logstest', {
+	            date: log.date,
+	            type: log.type,
+	            connection: log.connection,
+	            client_id: log.client_id,
+	            client_name: log.client_name,
+	            user_id: log.user_id,
+	            user_name: log.user_name
+	          });
+
+	          client.query(query, function (err, result) {
+	            if (err) {
+	              return cb(err);
+	            }
+	            cb(null);
+	          });
+	        }, function (err) {
+	          if (err) {
+	            return callback(err);
+	          }
+
+	          done();
+
+	          console.log('Upload complete.');
+	          return callback(null, context);
+	        });
 	      });
 	    }], function (err, context) {
 	      if (err) {
@@ -417,291 +437,6 @@ module.exports =
 /* 1 */
 /***/ function(module, exports, __webpack_require__) {
 
-	module.exports = __webpack_require__(2);
-	module.exports.setConfig = __webpack_require__(2).setConfig;
-	module.exports.query = __webpack_require__(4);
-	module.exports.model = __webpack_require__(5);
-	module.exports.import = __webpack_require__(5).import;
-
-/***/ },
-/* 2 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var pg = __webpack_require__(3);
-
-	var Redshift = function(config){
-	  if(config && typeof config === 'string' || typeof config === 'object'){
-	    var that = this;
-	    that.config = config;
-
-	    // use connection pooling from pg module
-	    pg.connect(config, function(err, client, done) {
-	      if(err) {
-	        throw new Error('error fetching client from pool', err);
-	      }
-	      else {
-	        // store the client instance to make queries with
-	        that.client = client;
-
-	        // store done to call back so it can return connection back to pool
-	        // https://github.com/brianc/node-postgres#client-pooling
-	        that.done = done;
-	      }
-	    });
-	  }
-	  else{
-	    throw new Error('invalid Redshift connection configuration');
-	  }
-	};
-
-	module.exports = Redshift;
-
-/***/ },
-/* 3 */
-/***/ function(module, exports) {
-
-	module.exports = require("pg");
-
-/***/ },
-/* 4 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var Redshift = __webpack_require__(2);
-
-	Redshift.prototype.query = function(query, options, callback){
-	  var that = this; //store original context of this because it will change inside callbacks
-	  var args = []; //this will store function args
-
-	  Array.prototype.push.apply(args, arguments);
-	  var q = args.shift(); //get query string which is first arg
-	  var cb = args.pop(); //get callback function which is last arg
-	  var opts = null;
-	  if(args && args[0]) opts = args[0]; // if there's an options arg, set it
-
-	  // check if client exists. if it does, run query
-	  // but if an application tries to call query before the connection
-	  // is established, set an interval and poll at 50ms to see if the client exists
-	  // once it does, clear the interval and run query
-	  if(that && !that.client){
-	    var count = 0;
-	    var intId = setInterval(function(){
-	      if(that && that.client){
-	        clearInterval(intId);
-	        runQuery(that, q, opts, cb);
-	      }
-	      else{
-	        count = count + 1; // count the attempts
-	        if(count > 600){ // and after 1 min, give up
-	          clearInterval(intId);
-	          throw new Error("Taking too long to estable connection or unable to make query");
-	        }
-	      }
-	    }, 100);
-	  }
-	  else runQuery(that, q, opts, cb);
-	};
-
-	function runQuery(that, q, opts, cb){
-	  that.client.query(q, function(err, data){
-	    if(err) cb(err);
-	    else{
-	      that.done();
-	      if(opts && opts.raw === true) cb(null, data.rows);
-	      else cb(null, data);
-	    }
-	  });
-	}
-
-	module.exports = Redshift.prototype.query;
-
-/***/ },
-/* 5 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var join = __webpack_require__(6).join;
-	var fs = __webpack_require__(7);
-	var folderName = 'redshift_models';
-	var ORM = __webpack_require__(8);
-	var Redshift = __webpack_require__(2);
-
-
-	var template = [
-	  "'use strict';"
-	  , "var model = require('node-redshift').model;"
-	  , "var person = {"
-	  , "  'tableName': 'people',"
-	  , "  'tableProperties': {"
-	  , "    'id': {"
-	  , "      'type': 'key'"
-	  , "    },"
-	  , "    'name': { "
-	  , "      'type': 'string',"
-	  , "      'required': true"
-	  , "    },"
-	  , "    'email': { "
-	  , "      'type': 'string',"
-	  , "      'required': true"
-	  , "    }"
-	  , "  }"
-	  , "};"
-	  , "module.exports = person;"
-	].join('\n');
-
-	function create(name) {
-	  try {
-	    fs.mkdirSync(folderName, 0774);
-	  } catch (err) {
-	    // ignore
-	  }
-	  var path = join(folderName, name + '.js');
-	  fs.writeFileSync(path, template);
-	}
-
-	module.exports.create = create;
-
-	Redshift.prototype.import = function(name){
-	  if(!Redshift.prototype.models) Redshift.prototype.models = [];
-	  var path = join(process.cwd(), name);
-	  if(Redshift.prototype.models[path]) return Redshift.prototype.models[path];
-	  else {
-	    var obj = __webpack_require__(12)(path);
-
-	    if (typeof obj != 'object') throw new Error('Cannot build without an object');
-	    if (obj.hasOwnProperty('tableName') == false && obj.tableName != null) throw new Error('Cannot build without a tableName to connect');
-	    if (obj.hasOwnProperty('tableProperties') == false && obj.tableProperties != null) throw new Error('Cannot build without tableProperties to export');
-
-	    var _return = new ORM(this);
-	    _return.tableName = obj.tableName;
-	    _return.tableProperties = obj.tableProperties;
-
-	    Redshift.prototype.models[path] = _return;
-	    return _return;
-	  }
-	};
-
-	module.exports.import = Redshift.prototype.import;
-
-/***/ },
-/* 6 */
-/***/ function(module, exports) {
-
-	module.exports = require("path");
-
-/***/ },
-/* 7 */
-/***/ function(module, exports) {
-
-	module.exports = require("fs");
-
-/***/ },
-/* 8 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var fs = __webpack_require__(7);
-	var bricks = __webpack_require__(9);
-	var Validate = __webpack_require__(11);
-
-	// convenience method:
-	function dbCall(redshiftClient, queryStr, callback) {
-	  redshiftClient.query(queryStr, function(err, data){
-	    if(err) callback(err);
-	    else {
-	      callback(null, data);
-	    }
-	  });
-	}
-
-	// ---------------------------------------
-
-	var ORM = function(redshiftClient) {
-	  this.tableName = null;
-	  this.tableProperties = null;
-	  this.redshiftClient = redshiftClient;
-	};
-
-	/**
-	 * create a new instance of object
-	 * @param  {Object}   data Object with keys/values to create in database. keys are column names, values are data
-	 * @param  {Function} cb   
-	 * @return {Object}        Object that's inserted into redshift
-	 *
-	 * Usage
-	 * Person.create({emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
-	 *   if(err) throw err;
-	 *   else console.log(data);
-	 * });
-	 */
-	ORM.prototype.create = function(data, cb) {
-	  var args = []; //this will store function args
-
-	  Array.prototype.push.apply(args, arguments);
-	  var data = args.shift(); //get query string which is first arg
-	  var callback = args.pop(); //get callback function which is last arg
-	  // var opts = null;
-	  // if(args && args[0]) opts = args[0]; // if there's an options arg, set it
-
-	  data = Validate(this.tableProperties, data);
-	  var queryStr = bricks.insert(this.tableName, data).toString();
-
-	  dbCall(this.redshiftClient, queryStr, function(err, data){
-	    if(err) callback(err);
-	    else callback(null, data);
-	  });
-	};
-
-
-	/**
-	 * update an existing item in redshift
-	 * @param  {Object}   whereClause The properties that identify the rows to update. Essentially the WHERE clause in the UPDATE statement
-	 * @param  {Object}   data        Properties to overwrite in the record
-	 * @param  {Function} callback    
-	 * @return {Object}               Object that's updated in redshift
-	 *
-	 * Usage
-	 * Person.update({id: 72}, {emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
-	 *   if(err) throw err;
-	 *   else console.log(data);
-	 * })
-	 */
-	ORM.prototype.update = function(whereClause, data, callback) {
-	  data = Validate(this.tableProperties, data);
-	  var queryStr = bricks.update(this.tableName, data).where(whereClause).toString();
-
-	  dbCall(this.redshiftClient, queryStr, function(err, data){
-	    if(err) callback(err);
-	    else callback(null, data);
-	  });
-	};
-
-	// Person.delete({id: 72}, function(err, data){
-	// })
-
-	/**
-	 * delete rows from redshift
-	 * @param  {Object}   whereClause The properties that identify the rows to update. Essentially the WHERE clause in the UPDATE statement
-	 * @param  {Function} cb   
-	 * @return {Object}        Object that's deleted from redshift
-	 *
-	 * Usage
-	 * Person.delete({emailAddress: 'dheeraj@email.com', name: 'Dheeraj'}, function(err, data){
-	 *   if(err) throw err;
-	 *   else console.log(data);
-	 * });
-	 */
-	ORM.prototype.delete = function(whereClause, callback) {
-	  var queryStr = bricks.delete(this.tableName).where(whereClause).toString();
-
-	  dbCall(this.redshiftClient, queryStr, function(err, data){
-	    if(err) callback(err);
-	    else callback(null, data);
-	  });
-	};
-	module.exports = ORM;
-
-/***/ },
-/* 9 */
-/***/ function(module, exports, __webpack_require__) {
-
 	(function() {
 	  "use strict";
 
@@ -710,7 +445,7 @@ module.exports =
 	  
 	  var _;
 	  if (is_common_js)
-	    _ = __webpack_require__(10);
+	    _ = __webpack_require__(2);
 	  else
 	    _ = window._;
 
@@ -1820,494 +1555,49 @@ module.exports =
 
 
 /***/ },
-/* 10 */
+/* 2 */
 /***/ function(module, exports) {
 
 	module.exports = require("underscore");
 
 /***/ },
-/* 11 */
+/* 3 */
 /***/ function(module, exports) {
 
-	'use strict';
-
-	module.exports = validate;
-
-	function validate(modelObj, data){
-	  var validKeys = Object.keys(modelObj);
-	  for(var key in data){
-	    if(data.hasOwnProperty(key)){
-	      if(validKeys.indexOf(key) === -1){
-	        delete data[key];
-	      }
-	    }
-	  }
-	  return data;
-	}
+	module.exports = require("pg");
 
 /***/ },
-/* 12 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var map = {
-		"./connection": 2,
-		"./connection.js": 2,
-		"./migration": 13,
-		"./migration.js": 13,
-		"./model": 5,
-		"./model.js": 5,
-		"./orm": 8,
-		"./orm.js": 8,
-		"./query": 4,
-		"./query.js": 4,
-		"./validation": 11,
-		"./validation.js": 11
-	};
-	function webpackContext(req) {
-		return __webpack_require__(webpackContextResolve(req));
-	};
-	function webpackContextResolve(req) {
-		return map[req] || (function() { throw new Error("Cannot find module '" + req + "'.") }());
-	};
-	webpackContext.keys = function webpackContextKeys() {
-		return Object.keys(map);
-	};
-	webpackContext.resolve = webpackContextResolve;
-	module.exports = webpackContext;
-	webpackContext.id = 12;
-
-
-/***/ },
-/* 13 */
-/***/ function(module, exports, __webpack_require__) {
-
-	// adapated from https://github.com/tj/node-migrate/blob/master/bin/migrate
-	// this was originally CLI, but I want to make this API accessible programatically
-
-	var migrate = __webpack_require__(14);
-	var join = __webpack_require__(6).join;
-	var fs = __webpack_require__(7);
-	var folderName = 'redshift_migrations';
-
-	var template = [
-	    '\'use strict\''
-	  , ''
-	  , 'exports.up = function(next) {'
-	  , '  next();'
-	  , '};'
-	  , ''
-	  , 'exports.down = function(next) {'
-	  , '  next();'
-	  , '};'
-	  , ''
-	].join('\n');
-
-
-
-	function create(name) {
-	  try {
-	    fs.mkdirSync(folderName, 0774);
-	  } catch (err) {
-	    // ignore
-	  }
-	  var curr = Date.now();
-	  name = curr + '-' + name;
-	  var path = join(folderName, name + '.js');
-	  console.log('create', join(process.cwd(), path));
-	  fs.writeFileSync(path, template);
-	}
-
-	module.exports.create = create;
-
-	function up(migrationName){
-	  performMigration('up', migrationName);
-	}
-
-	module.exports.up = up;
-	/**
-	 * down [name]
-	 */
-
-	function down(migrationName){
-	  performMigration('down', migrationName);
-	}
-
-	module.exports.down = down;
-
-	function performMigration(direction, migrationName) {
-	  var state = join(folderName, '.migrate');
-	  var set = migrate.load(state, folderName);
-
-	  set.on('migration', function(migration, direction){
-	    console.log(direction, migration.title);
-	  });
-
-	  var migrationPath = migrationName
-	    ? join(folderName, migrationName)
-	    : migrationName;
-
-	  set[direction](migrationName, function (err) {
-	    if (err) {
-	      console.log('error', err);
-	      process.exit(1);
-	    }
-
-	    console.log('migration', 'complete');
-	    process.exit(0);
-	  });
-	}
-
-/***/ },
-/* 14 */
-/***/ function(module, exports, __webpack_require__) {
-
-	
-	module.exports = __webpack_require__(15);
-
-/***/ },
-/* 15 */
-/***/ function(module, exports, __webpack_require__) {
-
-	
-	/*!
-	 * migrate
-	 * Copyright(c) 2011 TJ Holowaychuk <tj@vision-media.ca>
-	 * MIT Licensed
-	 */
-
-	/**
-	 * Module dependencies.
-	 */
-
-	var Set = __webpack_require__(16)
-	  , path = __webpack_require__(6)
-	  , fs = __webpack_require__(7);
-
-	/**
-	 * Expose the migrate function.
-	 */
-
-	exports = module.exports = migrate;
-
-	function migrate(title, up, down) {
-	  // migration
-	  if ('string' == typeof title && up && down) {
-	    migrate.set.addMigration(title, up, down);
-	  // specify migration file
-	  } else if ('string' == typeof title) {
-	    migrate.set = new Set(title);
-	  // no migration path
-	  } else if (!migrate.set) {
-	    throw new Error('must invoke migrate(path) before running migrations');
-	  // run migrations
-	  } else {
-	    return migrate.set;
-	  }
-	}
-
-	exports.load = function (stateFile, migrationsDirectory) {
-
-	  var set = new Set(stateFile);
-	  var dir = path.resolve(migrationsDirectory);
-
-	  fs.readdirSync(dir).filter(function(file){
-	    return file.match(/^\d+.*\.js$/);
-	  }).sort().forEach(function (file) {
-	    var mod = __webpack_require__(19)(path.join(dir, file));
-	    set.addMigration(file, mod.up, mod.down);
-	  });
-
-	  return set;
-	};
-
-
-/***/ },
-/* 16 */
-/***/ function(module, exports, __webpack_require__) {
-
-	
-	/*!
-	 * migrate - Set
-	 * Copyright (c) 2010 TJ Holowaychuk <tj@vision-media.ca>
-	 * MIT Licensed
-	 */
-
-	/**
-	 * Module dependencies.
-	 */
-
-	var EventEmitter = __webpack_require__(17).EventEmitter
-	  , Migration = __webpack_require__(18)
-	  , fs = __webpack_require__(7);
-
-	/**
-	 * Expose `Set`.
-	 */
-
-	module.exports = Set;
-
-	/**
-	 * Initialize a new migration `Set` with the given `path`
-	 * which is used to store data between migrations.
-	 *
-	 * @param {String} path
-	 * @api private
-	 */
-
-	function Set(path) {
-	  this.migrations = [];
-	  this.path = path;
-	  this.pos = 0;
-	};
-
-	/**
-	 * Inherit from `EventEmitter.prototype`.
-	 */
-
-	Set.prototype.__proto__ = EventEmitter.prototype;
-
-	/**
-	 * Add a migration.
-	 *
-	 * @param {String} title
-	 * @param {Function} up
-	 * @param {Function} down
-	 * @api public
-	 */
-
-	Set.prototype.addMigration = function(title, up, down){
-	  this.migrations.push(new Migration(title, up, down));
-	};
-
-	/**
-	 * Save the migration data.
-	 *
-	 * @api public
-	 */
-
-	Set.prototype.save = function(fn){
-	  var self = this
-	    , json = JSON.stringify(this);
-	  fs.writeFile(this.path, json, function(err){
-	    if (err) return fn(err);
-
-	    self.emit('save');
-	    fn(null);
-	  });
-	};
-
-	/**
-	 * Load the migration data and call `fn(err, obj)`.
-	 *
-	 * @param {Function} fn
-	 * @return {Type}
-	 * @api public
-	 */
-
-	Set.prototype.load = function(fn){
-	  this.emit('load');
-	  fs.readFile(this.path, 'utf8', function(err, json){
-	    if (err) return fn(err);
-	    try {
-	      fn(null, JSON.parse(json));
-	    } catch (err) {
-	      fn(err);
-	    }
-	  });
-	};
-
-	/**
-	 * Run down migrations and call `fn(err)`.
-	 *
-	 * @param {Function} fn
-	 * @api public
-	 */
-
-	Set.prototype.down = function(migrationName, fn){
-	  this.migrate('down', migrationName, fn);
-	};
-
-	/**
-	 * Run up migrations and call `fn(err)`.
-	 *
-	 * @param {Function} fn
-	 * @api public
-	 */
-
-	Set.prototype.up = function(migrationName, fn){
-	  this.migrate('up', migrationName, fn);
-	};
-
-	/**
-	 * Migrate in the given `direction`, calling `fn(err)`.
-	 *
-	 * @param {String} direction
-	 * @param {Function} fn
-	 * @api public
-	 */
-
-	Set.prototype.migrate = function(direction, migrationName, fn){
-	  if (typeof migrationName === 'function') {
-	    fn = migrationName;
-	    migrationName = null;
-	  }
-	  var self = this;
-	  this.load(function(err, obj){
-	    if (err) {
-	      if ('ENOENT' != err.code) return fn(err);
-	    } else {
-	      self.pos = obj.pos;
-	    }
-	    self._migrate(direction, migrationName, fn);
-	  });
-	};
-
-	/**
-	 * Get index of given migration in list of migrations
-	 *
-	 * @api private
-	 */
-
-	 function positionOfMigration(migrations, filename) {
-	   for(var i=0; i < migrations.length; ++i) {
-	     if (migrations[i].title == filename) return i;
-	   }
-	   return -1;
-	 }
-
-	/**
-	 * Perform migration.
-	 *
-	 * @api private
-	 */
-
-	Set.prototype._migrate = function(direction, migrationName, fn){
-	  var self = this
-	    , migrations
-	    , migrationPos;
-
-	  if (!migrationName) {
-	    migrationPos = direction == 'up' ? this.migrations.length : 0;
-	  } else if ((migrationPos = positionOfMigration(this.migrations, migrationName)) == -1) {
-	    return fn(new Error("Could not find migration: " + migrationName));
-	  }
-
-	  switch (direction) {
-	    case 'up':
-	      migrations = this.migrations.slice(this.pos, migrationPos+1);
-	      break;
-	    case 'down':
-	      migrations = this.migrations.slice(migrationPos, this.pos).reverse();
-	      break;
-	  }
-
-	  function next(migration) {
-	    if (!migration) return fn(null);
-
-	    self.emit('migration', migration, direction);
-	    migration[direction](function(err){
-	      if (err) return fn(err);
-
-	      self.pos += (direction === 'up' ? 1 : -1);
-	      self.save(function (err) {
-	        if (err) return fn(err);
-
-	        next(migrations.shift())
-	      });
-	    });
-	  }
-
-	  next(migrations.shift());
-	};
-
-
-/***/ },
-/* 17 */
-/***/ function(module, exports) {
-
-	module.exports = require("events");
-
-/***/ },
-/* 18 */
-/***/ function(module, exports) {
-
-	
-	/*!
-	 * migrate - Migration
-	 * Copyright (c) 2010 TJ Holowaychuk <tj@vision-media.ca>
-	 * MIT Licensed
-	 */
-
-	/**
-	 * Expose `Migration`.
-	 */
-
-	module.exports = Migration;
-
-	function Migration(title, up, down) {
-	  this.title = title;
-	  this.up = up;
-	  this.down = down;
-	}
-
-/***/ },
-/* 19 */
-/***/ function(module, exports, __webpack_require__) {
-
-	var map = {
-		"./migrate": 15,
-		"./migrate.js": 15,
-		"./migration": 18,
-		"./migration.js": 18,
-		"./set": 16,
-		"./set.js": 16
-	};
-	function webpackContext(req) {
-		return __webpack_require__(webpackContextResolve(req));
-	};
-	function webpackContextResolve(req) {
-		return map[req] || (function() { throw new Error("Cannot find module '" + req + "'.") }());
-	};
-	webpackContext.keys = function webpackContextKeys() {
-		return Object.keys(map);
-	};
-	webpackContext.resolve = webpackContextResolve;
-	module.exports = webpackContext;
-	webpackContext.id = 19;
-
-
-/***/ },
-/* 20 */
+/* 4 */
 /***/ function(module, exports) {
 
 	module.exports = require("auth0@2.1.0");
 
 /***/ },
-/* 21 */
+/* 5 */
 /***/ function(module, exports) {
 
 	module.exports = require("async");
 
 /***/ },
-/* 22 */
+/* 6 */
 /***/ function(module, exports) {
 
 	module.exports = require("moment");
 
 /***/ },
-/* 23 */
+/* 7 */
 /***/ function(module, exports) {
 
 	module.exports = require("useragent");
 
 /***/ },
-/* 24 */
+/* 8 */
 /***/ function(module, exports) {
 
 	module.exports = require("express");
 
 /***/ },
-/* 25 */
+/* 9 */
 /***/ function(module, exports, __webpack_require__) {
 
 	exports.fromConnect = exports.fromExpress = fromConnect;
@@ -2387,7 +1677,7 @@ module.exports =
 
 
 	    function readNotAvailable(path, options, cb) {
-	        var Boom = __webpack_require__(26);
+	        var Boom = __webpack_require__(10);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2398,8 +1688,8 @@ module.exports =
 	    }
 
 	    function readFromPath(path, options, cb) {
-	        var Boom = __webpack_require__(26);
-	        var Request = __webpack_require__(27);
+	        var Boom = __webpack_require__(10);
+	        var Request = __webpack_require__(11);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2422,7 +1712,7 @@ module.exports =
 	    }
 
 	    function writeNotAvailable(path, data, options, cb) {
-	        var Boom = __webpack_require__(26);
+	        var Boom = __webpack_require__(10);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2433,8 +1723,8 @@ module.exports =
 	    }
 
 	    function writeToPath(path, data, options, cb) {
-	        var Boom = __webpack_require__(26);
-	        var Request = __webpack_require__(27);
+	        var Boom = __webpack_require__(10);
+	        var Request = __webpack_require__(11);
 
 	        if (typeof options === 'function') {
 	            cb = options;
@@ -2458,29 +1748,29 @@ module.exports =
 
 
 /***/ },
-/* 26 */
+/* 10 */
 /***/ function(module, exports) {
 
 	module.exports = require("boom");
 
 /***/ },
-/* 27 */
+/* 11 */
 /***/ function(module, exports) {
 
 	module.exports = require("request");
 
 /***/ },
-/* 28 */
+/* 12 */
 /***/ function(module, exports) {
 
 	module.exports = require("superagent");
 
 /***/ },
-/* 29 */
+/* 13 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(setImmediate) {const LRU = __webpack_require__(32);
-	const _ = __webpack_require__(33);
+	/* WEBPACK VAR INJECTION */(function(setImmediate) {const LRU = __webpack_require__(16);
+	const _ = __webpack_require__(17);
 	const lru_params =  [ 'max', 'maxAge', 'length', 'dispose', 'stale' ];
 
 	module.exports = function (options) {
@@ -2554,13 +1844,13 @@ module.exports =
 
 	  return result;
 	};
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(30).setImmediate))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(14).setImmediate))
 
 /***/ },
-/* 30 */
+/* 14 */
 /***/ function(module, exports, __webpack_require__) {
 
-	/* WEBPACK VAR INJECTION */(function(setImmediate, clearImmediate) {var nextTick = __webpack_require__(31).nextTick;
+	/* WEBPACK VAR INJECTION */(function(setImmediate, clearImmediate) {var nextTick = __webpack_require__(15).nextTick;
 	var apply = Function.prototype.apply;
 	var slice = Array.prototype.slice;
 	var immediateIds = {};
@@ -2636,10 +1926,10 @@ module.exports =
 	exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate : function(id) {
 	  delete immediateIds[id];
 	};
-	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(30).setImmediate, __webpack_require__(30).clearImmediate))
+	/* WEBPACK VAR INJECTION */}.call(exports, __webpack_require__(14).setImmediate, __webpack_require__(14).clearImmediate))
 
 /***/ },
-/* 31 */
+/* 15 */
 /***/ function(module, exports) {
 
 	// shim for using process in browser
@@ -2736,13 +2026,13 @@ module.exports =
 
 
 /***/ },
-/* 32 */
+/* 16 */
 /***/ function(module, exports) {
 
 	module.exports = require("lru-cache");
 
 /***/ },
-/* 33 */
+/* 17 */
 /***/ function(module, exports) {
 
 	module.exports = require("lodash");
