@@ -24,7 +24,7 @@
     "lru-memoizer": "^1.2.0",
     "moment": "2.10.3",
     "node-redshift": "0.0.5",
-    "pg": "^4.3.0",
+    "pg": "^4.5.6",
     "sequelize": "^3.1.1",
     "sql-bricks": "^1.4.0",
     "useragent": "2.1.6",
